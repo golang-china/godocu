@@ -19,6 +19,11 @@ func strOr(a, b string) string {
 	return b
 }
 
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 // Abs 返回 path 的绝对路径.
 // 如果 path 疑似绝对路径返回 path.
 // 否则在 GOROOT, GOPATHS 中搜索 path 并返回绝对路径.
@@ -41,13 +46,13 @@ func Abs(path string) string {
 	}
 
 	abs, err := filepath.Abs(filepath.Join(GOROOT, "src", path))
-	if err == nil {
+	if err == nil && exists(abs) {
 		return abs
 	}
 
 	for _, gopath := range GOPATHS {
 		abs, err := filepath.Abs(filepath.Join(gopath, "src", path))
-		if err == nil {
+		if err == nil && exists(abs) {
 			return abs
 		}
 	}

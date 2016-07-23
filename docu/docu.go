@@ -10,7 +10,6 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"golang.org/x/tools/godoc/vfs"
 )
@@ -20,11 +19,14 @@ type Docu struct {
 	*token.FileSet
 	// Astpkg 以绝对包路径做 map key
 	Astpkg map[string]*ast.Package
+	// Filter 用于生成 Astpkg 时过滤目录名和文件名 name.
+	// name 不包括上级路径.
+	Filter func(name string) bool
 }
 
-// New 返回 Docu
+// New 返回使用 DefaultFilter 进行过滤的 Docu.
 func New() Docu {
-	return Docu{token.NewFileSet(), make(map[string]*ast.Package)}
+	return Docu{token.NewFileSet(), make(map[string]*ast.Package), DefaultFilter}
 }
 
 // Parse 返回解析 Go 文件, 包名称或包目录发生的错误.
@@ -75,7 +77,7 @@ func (du *Docu) parseFromVfs(fs vfs.FileSystem, dir string,
 	}
 
 	for _, info := range info {
-		if info.IsDir() || !strings.HasSuffix(info.Name(), ".go") {
+		if info.IsDir() || !du.Filter(info.Name()) {
 			continue
 		}
 		if r, err = fs.Open(info.Name()); err == nil {

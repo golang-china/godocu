@@ -45,7 +45,27 @@ func flagParse() []string {
 }
 
 func fprint(output io.Writer, fset *token.FileSet, file *ast.File) error {
-	return printer.Fprint(output, fset, file)
+	for _, decl := range file.Decls {
+		n := docu.NodeNumber(decl)
+
+		if n == 5 { // method
+			fmt.Print(n, " ", docu.RecvLit(decl.(*ast.FuncDecl)), " ")
+		} else {
+			fmt.Print(n, " ")
+		}
+		if n == 3 || n == 5 {
+			fdecl := decl.(*ast.FuncDecl)
+			body := fdecl.Body
+			fdecl.Body = nil
+			printer.Fprint(output, fset, fdecl)
+			fdecl.Body = body
+		} else {
+			printer.Fprint(output, fset, decl)
+		}
+		fmt.Println()
+	}
+	return nil
+	return printer.Fprint(output, fset, file.Decls)
 }
 
 func main() {

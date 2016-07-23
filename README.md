@@ -1,5 +1,5 @@
 # GoDocu
 
-* coming soon.... *
+***coming soon....***
 
-生成 Go 文档工具.
+Godocu 是 Go 文档生成支持库.
