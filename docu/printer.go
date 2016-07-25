@@ -40,7 +40,7 @@ func ToText(output io.Writer, text string) {
 var KeepPunct = `,.:;?，．：；？。`
 
 // LineWrapper 把 text 非缩进行超过显示长度 limit 的行插入换行符 "\n".
-// 参数:
+// 细节:
 //	text 行间 tab 按 4 字节宽度计算.
 //	preIndent 为每行固定缩进字符串.
 //	limit 的长度不包括 preIndent 的长度.
@@ -144,7 +144,7 @@ func Godoc(output io.Writer, paths string, fset *token.FileSet, pkg *ast.Package
 	)
 	Index(file)
 	fmt.Fprintln(output, "PACKAGE DOCUMENTATION\n\npackage", file.Name.String())
-	ToText(output, `import `+paths)
+	ToText(output, `import "`+paths+`"`)
 	if file.Doc != nil {
 		fmt.Fprintln(output)
 		ToText(output, file.Doc.Text())
