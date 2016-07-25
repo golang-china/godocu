@@ -1,6 +1,7 @@
 package docu
 
 import (
+	"go/ast"
 	"path/filepath"
 	"strings"
 )
@@ -12,4 +13,9 @@ func DefaultFilter(name string) bool {
 		return !strings.HasSuffix(name, "_test.go")
 	}
 	return false
+}
+
+// ExportedFilter 剔除非导出声明
+func ExportedFilter(file *ast.File) {
+
 }

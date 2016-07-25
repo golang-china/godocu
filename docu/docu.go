@@ -9,7 +9,9 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 
 	"golang.org/x/tools/godoc/vfs"
 )
@@ -17,7 +19,7 @@ import (
 // Docu 复合 token.FileSet, ast.Package 提供 Go doc 支持.
 type Docu struct {
 	*token.FileSet
-	// Astpkg 以绝对包路径做 map key
+	// Astpkg 以 import paths 做 map key
 	Astpkg map[string]*ast.Package
 	// Filter 用于生成 Astpkg 时过滤目录名和文件名 name.
 	// name 不包括上级路径.
@@ -96,21 +98,30 @@ func (du *Docu) parseFromVfs(fs vfs.FileSystem, dir string,
 }
 
 func (du *Docu) parseFile(abs, name string, src interface{}) error {
+	importPaths := strings.Replace(abs, `\`, `/`, -1)
+	pos := strings.LastIndex(importPaths, "/src/")
+	if pos != -1 {
+		importPaths = importPaths[pos+5:]
+	}
+
 	abs = filepath.Join(abs, name)
 
 	astfile, err := parser.ParseFile(du.FileSet, abs, src, parser.ParseComments)
 	if err != nil {
 		return err
 	}
-
 	name = astfile.Name.Name
-	pkg, ok := du.Astpkg[name]
+	// 同目录多包, 比如 main, test
+	if path.Base(importPaths) != name {
+		importPaths += "." + name
+	}
+	pkg, ok := du.Astpkg[importPaths]
 	if !ok {
 		pkg = &ast.Package{
 			Name:  name,
 			Files: make(map[string]*ast.File),
 		}
-		du.Astpkg[name] = pkg
+		du.Astpkg[importPaths] = pkg
 	} else if _, ok = pkg.Files[abs]; ok {
 		return errors.New("Duplicates: " + abs)
 	}

@@ -7,9 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"go/ast"
-	"go/printer"
-	"go/token"
-	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -44,30 +41,6 @@ func flagParse() []string {
 	return pkgs
 }
 
-func fprint(output io.Writer, fset *token.FileSet, file *ast.File) error {
-	for _, decl := range file.Decls {
-		n := docu.NodeNumber(decl)
-
-		if n == 5 { // method
-			fmt.Print(n, " ", docu.RecvLit(decl.(*ast.FuncDecl)), " ")
-		} else {
-			fmt.Print(n, " ")
-		}
-		if n == 3 || n == 5 {
-			fdecl := decl.(*ast.FuncDecl)
-			body := fdecl.Body
-			fdecl.Body = nil
-			printer.Fprint(output, fset, fdecl)
-			fdecl.Body = body
-		} else {
-			printer.Fprint(output, fset, decl)
-		}
-		fmt.Println()
-	}
-	return nil
-	return printer.Fprint(output, fset, file.Decls)
-}
-
 func main() {
 	var err error
 	paths := flagParse()
@@ -80,9 +53,8 @@ func main() {
 	}
 
 	fset := du.FileSet
-	for _, pkg := range du.Astpkg {
-		file := ast.MergePackageFiles(pkg, mode)
-		err = fprint(os.Stdout, fset, file)
+	for paths, pkg := range du.Astpkg {
+		err = docu.Godoc(os.Stdout, paths, fset, pkg)
 		if err != nil {
 			log.Fatal(err)
 		}
