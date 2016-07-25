@@ -99,11 +99,11 @@ func Godoc(output io.Writer, paths string, fset *token.FileSet, pkg *ast.Package
 			step = num
 			switch num {
 			case TypeNum:
-				fmt.Fprint(output, "\nTYPES\n\n")
+				fmt.Fprint(output, "\nTYPES\n")
 			case ConstNum:
-				fmt.Fprint(output, "\nCONSTANTS\n\n")
+				fmt.Fprint(output, "\nCONSTANTS\n")
 			case VarNum:
-				fmt.Fprint(output, "\nVARIABLES\n\n")
+				fmt.Fprint(output, "\nVARIABLES\n")
 			}
 		}
 		genDecl := decl.(*ast.GenDecl)
