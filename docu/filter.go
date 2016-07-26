@@ -11,6 +11,11 @@ func DefaultFilter(name string) bool {
 	return filepath.Ext(name) == ".go" && !strings.HasSuffix(name, "_test.go")
 }
 
+// ShowTestFilter 允许 "_test.go" 结尾的文件
+func ShowTestFilter(name string) bool {
+	return filepath.Ext(name) == ".go"
+}
+
 // ExportedFileFilter 剔除 non-nil file 中所有非导出声明, 返回该 file 是否具有导出声明.
 func ExportedFileFilter(file *ast.File) bool {
 	for i := 0; i < len(file.Decls); {
@@ -28,8 +33,8 @@ func ExportedFileFilter(file *ast.File) bool {
 func ExportedDeclFilter(decl ast.Decl) bool {
 	switch decl := decl.(type) {
 	case *ast.FuncDecl:
-		if decl.Recv != nil && !exportedRecvFilter(decl.Recv) {
-			return false
+		if decl.Recv != nil {
+			return exportedRecvFilter(decl.Recv)
 		}
 		return decl.Name.IsExported()
 	case *ast.GenDecl:

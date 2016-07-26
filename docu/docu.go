@@ -9,17 +9,27 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 
 	"golang.org/x/tools/godoc/vfs"
 )
 
+type Mode int
+
+const (
+	ShowCMD Mode = 1 << iota
+	ShowUnexported
+	ShowTest
+)
+
 // Docu 复合 token.FileSet, ast.Package 提供 Go doc 支持.
 type Docu struct {
+	mode Mode
 	*token.FileSet
-	// Astpkg 以 import paths 做 map key
+	// Astpkg 的 key 以 import paths 和包名计算得来.
+	// 如果包名为 "main" 或者 "_test" 结尾, key 为 import paths 附加 ":"+包名.
+	// 否则 key 为 import paths.
 	Astpkg map[string]*ast.Package
 	// Filter 用于生成 Astpkg 时过滤目录名和文件名 name.
 	// name 不包括上级路径.
@@ -27,8 +37,12 @@ type Docu struct {
 }
 
 // New 返回使用 DefaultFilter 进行过滤的 Docu.
-func New() Docu {
-	return Docu{token.NewFileSet(), make(map[string]*ast.Package), DefaultFilter}
+func New(mode Mode) Docu {
+	du := Docu{mode, token.NewFileSet(), make(map[string]*ast.Package), DefaultFilter}
+	if mode|ShowTest != 0 {
+		du.Filter = ShowTestFilter
+	}
+	return du
 }
 
 // Parse 返回解析 Go 文件, 包名称或包目录发生的错误.
@@ -110,10 +124,23 @@ func (du *Docu) parseFile(abs, name string, src interface{}) error {
 	if err != nil {
 		return err
 	}
-	name = astfile.Name.Name
+
+	name = astfile.Name.String()
+	if du.mode&ShowCMD == 0 && name == "main" {
+		return nil
+	}
+	if du.mode&ShowTest == 0 && (name == "test" || strings.HasSuffix(name, "_test")) {
+		return nil
+	}
+
+	if du.mode&ShowUnexported == 0 {
+		// 虽然可能没有导出内容, 但是可能有文档
+		ExportedFileFilter(astfile)
+	}
+
 	// 同目录多包, 比如 main, test
-	if path.Base(importPaths) != name {
-		importPaths += "." + name
+	if name == "main" || name == "test" || strings.HasSuffix(name, "_test") {
+		importPaths += ":" + name
 	}
 	pkg, ok := du.Astpkg[importPaths]
 	if !ok {

@@ -28,13 +28,14 @@ func Resultsify(results string) string {
 }
 
 // ToText 以 4 空格缩进向 go/doc.ToText 输出注释文本.
-func ToText(output io.Writer, text string) {
+func ToText(output io.Writer, text string) (err error) {
 	var buf bytes.Buffer
 	if text != "" {
 		// 利用 ToText 的 preIndent 功能
 		doc.ToText(&buf, text, "", "    ", 1<<32)
-		io.WriteString(output, LineWrapper(buf.String(), "    ", 76))
+		_, err = io.WriteString(output, LineWrapper(buf.String(), "    ", 76))
 	}
+	return
 }
 
 // LineWrapper 在换行中要保留标点符号
@@ -142,6 +143,11 @@ func LineWrapper(text string, prefix string, limit int) (wrap string) {
 	return
 }
 
+func fprint(output io.Writer, i ...interface{}) (err error) {
+	_, err = fmt.Fprint(output, i...)
+	return err
+}
+
 var config = printer.Config{Mode: printer.UseSpaces, Tabwidth: 4}
 
 // Godoc 仿 godoc 风格向 output 输出 ast.Package.
@@ -149,36 +155,55 @@ func Godoc(output io.Writer, paths string, fset *token.FileSet, pkg *ast.Package
 	file := ast.MergePackageFiles(pkg,
 		ast.FilterFuncDuplicates|ast.FilterUnassociatedComments|ast.FilterImportDuplicates,
 	)
-	Index(file)
-	fmt.Fprintln(output, "PACKAGE DOCUMENTATION\n\npackage", file.Name.String())
-	ToText(output, `import "`+paths+`"`)
-	if file.Doc != nil {
-		fmt.Fprintln(output)
-		ToText(output, file.Doc.Text())
-	}
-
-	if len(file.Imports) != 0 {
-		fmt.Fprint(output, "\nIMPORTS\n\n")
-		if len(file.Imports) == 1 {
-			fmt.Fprint(output, "import ", file.Name.String(), nl)
-		} else {
-			fmt.Fprint(output, "import (\n")
-			for i, im := range file.Imports {
-				if i == 0 {
-					fmt.Fprint(output, "    ")
-				} else {
-					fmt.Fprint(output, "\n    ")
-				}
-				fmt.Fprint(output, im.Path.Value)
-			}
-			fmt.Fprint(output, "\n)\n")
-		}
-	}
-
-	if !ExportedFileFilter(file) {
+	text := file.Name.String()
+	if err = fprint(output, "PACKAGE DOCUMENTATION\n\npackage ", text, nl); err != nil {
 		return
 	}
 
+	if pos := strings.IndexByte(paths, ':'); pos == -1 {
+		text = `    import "` + paths + `"`
+	} else if paths[pos:] == ":main" {
+		// BUG: 可能是 +build ignore
+		text = `    EXECUTABLE PROGRAM IN PACKAGE ` + paths[:pos]
+	} else if paths[pos:] == ":test" || strings.HasSuffix(paths, "_test") {
+		text = `    go test ` + paths[:pos]
+	}
+
+	if err = fprint(output, text, nl); err == nil && file.Doc != nil {
+		if err = fprint(output, nl); err == nil {
+			err = ToText(output, file.Doc.Text())
+		}
+	}
+
+	if err != nil {
+		return
+	}
+
+	if len(file.Imports) != 0 {
+		if err = fprint(output, "\nIMPORTS\n\n"); err != nil {
+			return
+		}
+		if len(file.Imports) == 1 {
+			err = fprint(output, "import ", file.Name.String(), nl)
+		} else {
+			for i, im := range file.Imports {
+				if i == 0 {
+					err = fprint(output, "import (\n    ", im.Path.Value, nl)
+				} else {
+					err = fprint(output, "    ", im.Path.Value, nl)
+				}
+				if err != nil {
+					return
+				}
+			}
+			err = fprint(output, ")\n")
+		}
+	}
+	if err != nil {
+		return
+	}
+
+	Index(file)
 	step := ImportNum
 	for _, decl := range file.Decls {
 		num := NodeNumber(decl)
@@ -190,21 +215,30 @@ func Godoc(output io.Writer, paths string, fset *token.FileSet, pkg *ast.Package
 			fdecl := decl.(*ast.FuncDecl)
 			if step != num {
 				if num == FuncNum {
-					fmt.Fprint(output, "\nFUNCTIONS\n")
+					err = fprint(output, "\nFUNCTIONS\n")
 				} else {
-					fmt.Fprint(output, "\nMETHODS\n")
+					err = fprint(output, "\nMETHODS\n")
+				}
+				if err != nil {
+					return
 				}
 				step = num
 			}
 			if num == FuncNum {
-				fmt.Fprint(output, "\nfunc ")
+				text = "\nfunc "
 			} else {
-				fmt.Fprint(output, "\nfunc (", RecvLit(fdecl), ") ")
+				text = "\nfunc (" + RecvLit(fdecl) + ") "
 			}
-			fmt.Fprint(output, fdecl.Name.String(), "(", FieldListLit(fdecl.Type.Params), ")")
-			fmt.Fprint(output, Resultsify(FieldListLit(fdecl.Type.Results)), nl)
-			if fdecl.Doc != nil {
-				ToText(output, fdecl.Doc.Text())
+			err = fprint(output, text, fdecl.Name.String(),
+				"(", FieldListLit(fdecl.Type.Params), ")",
+				Resultsify(FieldListLit(fdecl.Type.Results)),
+				nl,
+			)
+			if err == nil && fdecl.Doc != nil {
+				err = ToText(output, fdecl.Doc.Text())
+			}
+			if err != nil {
+				return
 			}
 			continue
 		}
@@ -217,20 +251,31 @@ func Godoc(output io.Writer, paths string, fset *token.FileSet, pkg *ast.Package
 			step = num
 			switch num {
 			case TypeNum:
-				fmt.Fprint(output, "\nTYPES\n")
+				err = fprint(output, "\nTYPES\n")
 			case ConstNum:
-				fmt.Fprint(output, "\nCONSTANTS\n")
+				err = fprint(output, "\nCONSTANTS\n")
 			case VarNum:
-				fmt.Fprint(output, "\nVARIABLES\n")
+				err = fprint(output, "\nVARIABLES\n")
+			}
+			if err != nil {
+				return
 			}
 		}
 		docGroup := genDecl.Doc
 		genDecl.Doc = nil
-		fmt.Fprint(output, nl)
-		config.Fprint(output, fset, genDecl)
-		fmt.Fprint(output, nl)
-		ToText(output, docGroup.Text())
+		if err = fprint(output, nl); err != nil {
+			return
+		}
+		if err = config.Fprint(output, fset, genDecl); err != nil {
+			return
+		}
+		if err = fprint(output, nl); err != nil {
+			return
+		}
+		if err = ToText(output, docGroup.Text()); err != nil {
+			return
+		}
 		genDecl.Doc = docGroup
 	}
-	return nil
+	return
 }

@@ -23,11 +23,25 @@ func usage() {
 	os.Exit(2)
 }
 
-func flagParse() []string {
+func flagParse() ([]string, docu.Mode) {
 	var gopath string
+	var mode docu.Mode
+
 	flag.Usage = usage
 	flag.StringVar(&docu.GOROOT, "goroot", docu.GOROOT, "Go root directory")
 	flag.StringVar(&gopath, "gopath", os.Getenv("GOPATH"), "specifies gopath")
+
+	if *flag.Bool("u", false, "show unexported symbols as well as exported") {
+		mode |= docu.ShowUnexported
+	}
+
+	if *flag.Bool("cmd", false, "show symbols with package docs even if package is a command") {
+		mode |= docu.ShowCMD
+	}
+
+	if *flag.Bool("test", false, "show symbols with package docs even if package is a testing") {
+		mode |= docu.ShowTest
+	}
 
 	flag.Parse()
 	pkgs := flag.Args()
@@ -38,13 +52,13 @@ func flagParse() []string {
 	if gopath != "" {
 		docu.GOPATHS = filepath.SplitList(gopath)
 	}
-	return pkgs
+	return pkgs, mode
 }
 
 func main() {
 	var err error
-	paths := flagParse()
-	du := docu.New()
+	paths, mode := flagParse()
+	du := docu.New(mode)
 	for _, path := range paths {
 		err = du.Parse(path, nil)
 		if err != nil {
