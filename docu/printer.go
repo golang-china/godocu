@@ -27,13 +27,23 @@ func Resultsify(results string) string {
 	return " (" + results + ")"
 }
 
-// ToText 以 4 空格缩进向 go/doc.ToText 输出注释文本.
-func ToText(output io.Writer, text string) (err error) {
+// ToText 以 4 空格缩进输出 godoc 风格的纯文本注释.
+func ToText(output io.Writer, text string) error {
+	return FormatComments(output, text, "    ", 76)
+}
+
+// ToSource 以 4 空格缩进输出 go source 风格的注释.
+func ToSource(output io.Writer, text string) error {
+	return FormatComments(output, text, "// ", 77)
+}
+
+// FormatComments 调用 LineWrapper 换行格式化注释 text 输出到 output.
+func FormatComments(output io.Writer, text, prefix string, limit int) (err error) {
 	var buf bytes.Buffer
 	if text != "" {
 		// 利用 ToText 的 preIndent 功能
 		doc.ToText(&buf, text, "", "    ", 1<<32)
-		_, err = io.WriteString(output, LineWrapper(buf.String(), "    ", 76))
+		_, err = io.WriteString(output, LineWrapper(buf.String(), prefix, limit))
 	}
 	return
 }
@@ -273,6 +283,108 @@ func Godoc(output io.Writer, paths string, fset *token.FileSet, pkg *ast.Package
 			return
 		}
 		if err = ToText(output, docGroup.Text()); err != nil {
+			return
+		}
+		genDecl.Doc = docGroup
+	}
+	return
+}
+
+// DocGo 以 go source 风格向 output 输出 ast.Package.
+func DocGo(output io.Writer, paths string, fset *token.FileSet, pkg *ast.Package) (err error) {
+	file := ast.MergePackageFiles(pkg,
+		ast.FilterFuncDuplicates|ast.FilterUnassociatedComments|ast.FilterImportDuplicates,
+	)
+	if file.Doc != nil {
+		err = ToSource(output, file.Doc.Text())
+	}
+	if err != nil {
+		return
+	}
+
+	text := file.Name.String()
+
+	if pos := strings.IndexByte(paths, ':'); pos != -1 {
+		paths = paths[:pos]
+	}
+
+	if text == "main" {
+		text += " // go get " + paths
+	} else if text == "test" || strings.HasSuffix(text, "_test") {
+		text += " // go test " + paths
+	} else {
+		text += ` // import "` + paths + `"`
+	}
+
+	err = fprint(output, "package ", text, nl+nl)
+
+	if len(file.Imports) != 0 {
+		if len(file.Imports) == 1 {
+			err = fprint(output, "import ", file.Name.String(), nl)
+		} else {
+			for i, im := range file.Imports {
+				if i == 0 {
+					err = fprint(output, "import (\n    ", im.Path.Value, nl)
+				} else {
+					err = fprint(output, "    ", im.Path.Value, nl)
+				}
+				if err != nil {
+					return
+				}
+			}
+			err = fprint(output, ")\n\n")
+		}
+	}
+	if err != nil {
+		return
+	}
+
+	Index(file)
+
+	for _, decl := range file.Decls {
+		num := NodeNumber(decl)
+		if num == ImportNum {
+			continue
+		}
+
+		if num == FuncNum || num == MethodNum {
+			fdecl := decl.(*ast.FuncDecl)
+			if fdecl.Doc != nil {
+				if err = ToSource(output, fdecl.Doc.Text()); err != nil {
+					return
+				}
+			}
+
+			if num == FuncNum {
+				text = "func "
+			} else {
+				text = "func (" + RecvLit(fdecl) + ") "
+			}
+			err = fprint(output, text, fdecl.Name.String(),
+				"(", FieldListLit(fdecl.Type.Params), ")",
+				Resultsify(FieldListLit(fdecl.Type.Results)),
+				nl+nl,
+			)
+
+			if err != nil {
+				return
+			}
+			continue
+		}
+		genDecl := decl.(*ast.GenDecl)
+		if len(genDecl.Specs) == 0 {
+			continue
+		}
+
+		docGroup := genDecl.Doc
+		genDecl.Doc = nil
+		if err = ToSource(output, docGroup.Text()); err != nil {
+			return
+		}
+		if err = config.Fprint(output, fset, genDecl); err != nil {
+			return
+		}
+		if err = fprint(output, nl+nl); err != nil {
 			return
 		}
 		genDecl.Doc = docGroup

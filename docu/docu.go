@@ -1,6 +1,5 @@
 // +build go1.5
 
-// coming soon....
 package docu
 
 import (
