@@ -17,7 +17,7 @@ const (
 	TypeNum
 	FuncNum
 	MethodNum
-	BadNum = 1 << 32
+	OtherNum = 1 << 32
 )
 
 // NodeNumber 返回值用于节点排序. 随算法更新同类型节点该返回值会变更.
@@ -41,7 +41,7 @@ func NodeNumber(node ast.Node) int {
 		return MethodNum
 	}
 	// BadDecl 或其他
-	return BadNum
+	return OtherNum
 }
 
 // NodeLit 返回用于排序的 node 字面描述.

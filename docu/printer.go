@@ -175,6 +175,10 @@ func Godoc(output io.Writer, paths string, fset *token.FileSet, pkg *ast.Package
 		}
 	}
 
+	if !ExportedFileFilter(file) {
+		return
+	}
+
 	step := ImportNum
 	for _, decl := range file.Decls {
 		num := NodeNumber(decl)
@@ -184,9 +188,6 @@ func Godoc(output io.Writer, paths string, fset *token.FileSet, pkg *ast.Package
 
 		if num == FuncNum || num == MethodNum {
 			fdecl := decl.(*ast.FuncDecl)
-			if !ast.IsExported(fdecl.Name.String()) {
-				continue
-			}
 			if step != num {
 				if num == FuncNum {
 					fmt.Fprint(output, "\nFUNCTIONS\n")
@@ -207,6 +208,11 @@ func Godoc(output io.Writer, paths string, fset *token.FileSet, pkg *ast.Package
 			}
 			continue
 		}
+		genDecl := decl.(*ast.GenDecl)
+		if len(genDecl.Specs) == 0 {
+			continue
+		}
+
 		if step != num {
 			step = num
 			switch num {
@@ -218,11 +224,10 @@ func Godoc(output io.Writer, paths string, fset *token.FileSet, pkg *ast.Package
 				fmt.Fprint(output, "\nVARIABLES\n")
 			}
 		}
-		genDecl := decl.(*ast.GenDecl)
 		docGroup := genDecl.Doc
 		genDecl.Doc = nil
 		fmt.Fprint(output, nl)
-		config.Fprint(output, fset, decl)
+		config.Fprint(output, fset, genDecl)
 		fmt.Fprint(output, nl)
 		ToText(output, docGroup.Text())
 		genDecl.Doc = docGroup
