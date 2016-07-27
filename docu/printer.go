@@ -236,16 +236,7 @@ func Godoc(output io.Writer, paths string, fset *token.FileSet, pkg *ast.Package
 				}
 				step = num
 			}
-			if num == FuncNum {
-				text = "\nfunc "
-			} else {
-				text = "\nfunc (" + RecvLit(fdecl) + ") "
-			}
-			err = fprint(output, text, fdecl.Name.String(),
-				"(", FieldListLit(fdecl.Type.Params), ")",
-				Resultsify(FieldListLit(fdecl.Type.Results)),
-				nl,
-			)
+			err = fprint(output, nl, FuncLit(fdecl), nl)
 			if err == nil && fdecl.Doc != nil {
 				err = ToText(output, fdecl.Doc.Text())
 			}
@@ -358,16 +349,7 @@ func DocGo(output io.Writer, paths string, fset *token.FileSet, pkg *ast.Package
 				}
 			}
 
-			if num == FuncNum {
-				text = "func "
-			} else {
-				text = "func (" + RecvLit(fdecl) + ") "
-			}
-			err = fprint(output, text, fdecl.Name.String(),
-				"(", FieldListLit(fdecl.Type.Params), ")",
-				Resultsify(FieldListLit(fdecl.Type.Results)),
-				nl+nl,
-			)
+			err = fprint(output, FuncLit(fdecl), nl+nl)
 
 			if err != nil {
 				return

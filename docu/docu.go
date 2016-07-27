@@ -8,8 +8,10 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"golang.org/x/tools/godoc/vfs"
@@ -25,7 +27,8 @@ const (
 
 // Docu 复合 token.FileSet, ast.Package 提供 Go doc 支持.
 type Docu struct {
-	mode Mode
+	mode       Mode
+	parserMode parser.Mode
 	*token.FileSet
 	// Astpkg 的 key 以 import paths 和包名计算得来.
 	// 如果包名为 "main" 或者 "_test" 结尾, key 为 import paths 附加 ":"+包名.
@@ -38,7 +41,7 @@ type Docu struct {
 
 // New 返回使用 DefaultFilter 进行过滤的 Docu.
 func New(mode Mode) Docu {
-	du := Docu{mode, token.NewFileSet(), make(map[string]*ast.Package), DefaultFilter}
+	du := Docu{mode, parser.ParseComments, token.NewFileSet(), make(map[string]*ast.Package), DefaultFilter}
 	if mode|ShowTest != 0 {
 		du.Filter = ShowTestFilter
 	}
@@ -58,23 +61,41 @@ func (du *Docu) MergePackageFiles(key string) *ast.File {
 	return file
 }
 
-// Parse 返回解析 Go 文件, 包名称或包目录发生的错误.
-// source 可以是 nil, []byte, string, io.Reader 或 vfs.FileSystem.
+// Parse 解析 path,source 并返回发生的错误.
+//
+// 	要求 path,source 组合后对应的代码都已格式化.
+//  如果无法确定文件名将生产临时文件名于 FileSet.
+//
+// path:
+//   import paths 或 Go 文件名
+// source:
+//   nil
+//   vfs.FileSystem
+//   []byte,string,io.Reader,*bytes.Buffer
+//
 func (du *Docu) Parse(path string, source interface{}) (err error) {
 	var info []os.FileInfo
 	var fs vfs.FileSystem
 	var ok bool
+
 	if source == nil {
 		path = Abs(path)
 		info, err = du.readFileInfo(path)
+	} else if fs, ok = source.(vfs.FileSystem); ok {
+		info, err = fs.ReadDir(path)
 	} else {
-		fs, ok = source.(vfs.FileSystem)
-		if !ok {
-			path = Abs(path)
-			info, err = du.readFileInfo(path)
-		} else {
-			info, err = fs.ReadDir(path)
+		// 文件方式
+		abs := Abs(path)
+		if !du.Filter(path) {
+			return errors.New("invalid path: " + path)
 		}
+		pos := strings.LastIndexAny(abs, `\/`)
+		if pos != -1 {
+			path, abs = abs[pos+1:], abs[:pos]
+		} else {
+			path = ""
+		}
+		return du.parseFile(abs, path, source)
 	}
 
 	if err == nil {
@@ -125,15 +146,20 @@ func (du *Docu) parseFromVfs(fs vfs.FileSystem, dir string,
 }
 
 func (du *Docu) parseFile(abs, name string, src interface{}) error {
-	importPaths := strings.Replace(abs, `\`, `/`, -1)
+	none := name == ""
+	importPaths := path.Clean(abs)
+	if src == nil {
+		abs = filepath.Join(abs, name)
+	} else {
+		abs = path.Join(importPaths, name)
+	}
+
 	pos := strings.LastIndex(importPaths, "/src/")
 	if pos != -1 {
 		importPaths = importPaths[pos+5:]
 	}
 
-	abs = filepath.Join(abs, name)
-
-	astfile, err := parser.ParseFile(du.FileSet, abs, src, parser.ParseComments)
+	astfile, err := parser.ParseFile(du.FileSet, abs, src, du.parserMode)
 	if err != nil {
 		return err
 	}
@@ -162,7 +188,15 @@ func (du *Docu) parseFile(abs, name string, src interface{}) error {
 			Files: make(map[string]*ast.File),
 		}
 		du.Astpkg[importPaths] = pkg
-	} else if _, ok = pkg.Files[abs]; ok {
+	}
+	if none {
+		if src == nil {
+			abs = filepath.Join(abs, "_"+strconv.Itoa(len(pkg.Files))+".go")
+		} else {
+			abs = path.Join(abs, "_"+strconv.Itoa(len(pkg.Files))+".go")
+		}
+	}
+	if _, ok = pkg.Files[abs]; ok {
 		return errors.New("Duplicates: " + abs)
 	}
 	pkg.Files[abs] = astfile
