@@ -198,7 +198,8 @@ func SpecTypeLit(spec ast.Spec) (lit string) {
  */
 type SortDecl []ast.Decl
 
-func (s SortDecl) Len() int { return len(s) }
+func (s SortDecl) Len() int      { return len(s) }
+func (s SortDecl) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
 func (s SortDecl) Less(i, j int) bool {
 	in, jn := NodeNumber(s[i]), NodeNumber(s[j])
 	if in != jn {
@@ -224,7 +225,14 @@ func (s SortDecl) Less(i, j int) bool {
 	return false
 }
 
-func (s SortDecl) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
+// SortImports 实现 sort.Interface. 按照 import path 进行排序.
+type SortImports []*ast.ImportSpec
+
+func (s SortImports) Len() int      { return len(s) }
+func (s SortImports) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
+func (s SortImports) Less(i, j int) bool {
+	return s[i].Path.Value < s[j].Path.Value
+}
 
 // Index 对 file 顶级声明重新排序. 按照:
 //

@@ -8,6 +8,7 @@ import (
 	"go/printer"
 	"go/token"
 	"io"
+	"sort"
 	"strings"
 	"unicode"
 
@@ -48,7 +49,7 @@ func FormatComments(output io.Writer, text, prefix string, limit int) (err error
 	return
 }
 
-// LineWrapper 在换行中要保留标点符号
+// KeepPunct 是 LineWrapper 进行换行时行尾要保留标点符号
 var KeepPunct = `,.:;?，．：；？。`
 
 // LineWrapper 把 text 非缩进行超过显示长度 limit 的行插入换行符 "\n".
@@ -165,6 +166,7 @@ func Godoc(output io.Writer, paths string, fset *token.FileSet, pkg *ast.Package
 	file := ast.MergePackageFiles(pkg,
 		ast.FilterFuncDuplicates|ast.FilterUnassociatedComments|ast.FilterImportDuplicates,
 	)
+	sort.Sort(SortImports(file.Imports))
 	text := file.Name.String()
 	if err = fprint(output, "PACKAGE DOCUMENTATION\n\npackage ", text, nl); err != nil {
 		return
@@ -295,6 +297,7 @@ func DocGo(output io.Writer, paths string, fset *token.FileSet, pkg *ast.Package
 	file := ast.MergePackageFiles(pkg,
 		ast.FilterFuncDuplicates|ast.FilterUnassociatedComments|ast.FilterImportDuplicates,
 	)
+	sort.Sort(SortImports(file.Imports))
 	if file.Doc != nil {
 		err = ToSource(output, file.Doc.Text())
 	}

@@ -9,6 +9,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"golang.org/x/tools/godoc/vfs"
@@ -42,6 +43,19 @@ func New(mode Mode) Docu {
 		du.Filter = ShowTestFilter
 	}
 	return du
+}
+
+// MergePackageFiles 合并 du.Astpkg[key] 为一个 ast.File 文件.
+// 并对 import path 进行排序.
+func (du *Docu) MergePackageFiles(key string) *ast.File {
+	pkg, ok := du.Astpkg[key]
+	if !ok || pkg == nil {
+		return nil
+	}
+	file := ast.MergePackageFiles(pkg,
+		ast.FilterFuncDuplicates|ast.FilterUnassociatedComments|ast.FilterImportDuplicates)
+	sort.Sort(SortImports(file.Imports))
+	return file
 }
 
 // Parse 返回解析 Go 文件, 包名称或包目录发生的错误.

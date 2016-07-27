@@ -56,7 +56,7 @@ func flagParse() ([]string, docu.Mode) {
 		flag.Usage()
 	}
 
-	if gopath != "" {
+	if gopath != os.Getenv("GOPATH") {
 		docu.GOPATHS = filepath.SplitList(gopath)
 	}
 	return pkgs, mode
