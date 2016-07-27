@@ -103,3 +103,23 @@ func FieldLit(field *ast.Field) (lit string) {
 	}
 	return
 }
+
+// ImportsString 返回 imports 源码.
+func ImportsString(is []*ast.ImportSpec) (s string) {
+	if len(is) == 0 {
+		return
+	}
+
+	if len(is) == 1 {
+		return "import " + is[0].Path.Value + nl
+	}
+	for i, im := range is {
+		if i == 0 {
+			s += "import (\n    " + im.Path.Value + nl
+		} else {
+			s += "    " + im.Path.Value + nl
+		}
+	}
+	s += ")\n"
+	return
+}

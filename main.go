@@ -17,7 +17,11 @@ const mode = ast.FilterFuncDuplicates |
 	ast.FilterUnassociatedComments | ast.FilterImportDuplicates
 
 func usage() {
-	fmt.Fprint(os.Stderr, "usage: godocu package ...\n")
+	fmt.Fprintln(os.Stderr,
+		`usage: godocu package [target]
+         target       the directory as an absolute base path of docs.
+                      the path for output if not set -diff.`,
+	)
 	flag.PrintDefaults()
 	os.Exit(2)
 }
@@ -25,7 +29,7 @@ func usage() {
 func flagParse() ([]string, docu.Mode) {
 	var gopath string
 	var mode docu.Mode
-	var u, cmd, test, source bool
+	var u, cmd, test, source, diff bool
 
 	flag.Usage = usage
 	flag.StringVar(&docu.GOROOT, "goroot", docu.GOROOT, "Go root directory")
@@ -34,6 +38,7 @@ func flagParse() ([]string, docu.Mode) {
 	flag.BoolVar(&cmd, "cmd", false, "show symbols with package docs even if package is a command")
 	flag.BoolVar(&test, "test", false, "show symbols with package docs even if package is a testing")
 	flag.BoolVar(&source, "go", false, "prints a formatted string to standard output as Go source code")
+	flag.BoolVar(&diff, "diff", false, "list different of package of target-path docs")
 
 	flag.Parse()
 
@@ -50,38 +55,73 @@ func flagParse() ([]string, docu.Mode) {
 	if source {
 		mode |= 1 << 30
 	}
+	if diff {
+		mode |= 1 << 31
+	}
 
-	pkgs := flag.Args()
-	if len(pkgs) == 0 {
+	paths := flag.Args()
+	if len(paths) == 0 {
 		flag.Usage()
+	}
+
+	if len(paths) == 2 {
+		fi, err := os.Stat(paths[1])
+		if err != nil {
+			log.Fatal("target must be an absolute base path of docs, but ", err)
+		}
+		if !fi.IsDir() {
+			log.Fatal("target must be an absolute base path of docs")
+		}
 	}
 
 	if gopath != os.Getenv("GOPATH") {
 		docu.GOPATHS = filepath.SplitList(gopath)
 	}
-	return pkgs, mode
+	return paths, mode
 }
 
 func main() {
 	var err error
 	paths, mode := flagParse()
 	godoc := docu.Godoc
-	if mode&(1<<30) != 0 {
+	if 1<<30&mode != 0 {
 		godoc = docu.DocGo
 		mode -= 1 << 30
 	}
-	du := docu.New(mode)
-	for _, path := range paths {
-		err = du.Parse(path, nil)
-		if err != nil {
-			log.Fatal(err)
-		}
+	diff := 1<<31&mode != 0
+	if diff {
+		mode -= 1 << 31
 	}
-	fset := du.FileSet
-	for paths, pkg := range du.Astpkg {
-		err = godoc(os.Stdout, paths, fset, pkg)
-		if err != nil {
-			log.Fatal(err)
+
+	du := docu.New(mode)
+	err = du.Parse(paths[0], nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if !diff {
+		for paths, pkg := range du.Astpkg {
+			err = godoc(os.Stdout, paths, du.FileSet, pkg)
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
+		return
+	}
+
+	od := docu.New(mode)
+	err = od.Parse(filepath.Join(paths[1], paths[0]), nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	for key, _ := range du.Astpkg {
+		_, ok := od.Astpkg[key]
+		if !ok {
+			fmt.Println("[TEXT] PACKAGES", key)
+			return
+		}
+		if !docu.Same(os.Stdout, du.MergePackageFiles(key), od.MergePackageFiles(key)) {
+			fmt.Println(", on package", key)
+			break
 		}
 	}
 }

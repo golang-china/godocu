@@ -63,7 +63,7 @@ func (du *Docu) MergePackageFiles(key string) *ast.File {
 
 // Parse 解析 path,source 并返回发生的错误.
 //
-// 	要求 path,source 组合后对应的代码都已格式化.
+//  约定预先格式化 path,source 组合后对应的代码.
 //  如果无法确定文件名将生产临时文件名于 FileSet.
 //
 // path:

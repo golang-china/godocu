@@ -187,29 +187,8 @@ func Godoc(output io.Writer, paths string, fset *token.FileSet, pkg *ast.Package
 		}
 	}
 
-	if err != nil {
-		return
-	}
-
-	if len(file.Imports) != 0 {
-		if err = fprint(output, "\nIMPORTS\n\n"); err != nil {
-			return
-		}
-		if len(file.Imports) == 1 {
-			err = fprint(output, "import ", file.Name.String(), nl)
-		} else {
-			for i, im := range file.Imports {
-				if i == 0 {
-					err = fprint(output, "import (\n    ", im.Path.Value, nl)
-				} else {
-					err = fprint(output, "    ", im.Path.Value, nl)
-				}
-				if err != nil {
-					return
-				}
-			}
-			err = fprint(output, ")\n")
-		}
+	if err == nil && len(file.Imports) != 0 {
+		err = fprint(output, "\nIMPORTS\n\n", ImportsString(file.Imports))
 	}
 	if err != nil {
 		return
@@ -312,22 +291,8 @@ func DocGo(output io.Writer, paths string, fset *token.FileSet, pkg *ast.Package
 
 	err = fprint(output, "package ", text, nl+nl)
 
-	if len(file.Imports) != 0 {
-		if len(file.Imports) == 1 {
-			err = fprint(output, "import ", file.Name.String(), nl)
-		} else {
-			for i, im := range file.Imports {
-				if i == 0 {
-					err = fprint(output, "import (\n    ", im.Path.Value, nl)
-				} else {
-					err = fprint(output, "    ", im.Path.Value, nl)
-				}
-				if err != nil {
-					return
-				}
-			}
-			err = fprint(output, ")\n\n")
-		}
+	if err == nil && len(file.Imports) != 0 {
+		err = fprint(output, ImportsString(file.Imports), nl)
 	}
 	if err != nil {
 		return
