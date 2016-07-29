@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 )
 
 var (
@@ -29,20 +28,13 @@ func exists(path string) bool {
 // 否则在 GOROOT, GOPATHS 中搜索 path 并返回绝对路径.
 // 如果未找到返回 path.
 func Abs(path string) string {
-	if path == "" {
-		return ""
+	if path == "" || filepath.IsAbs(path) {
+		return path
 	}
-
 	if path[0] == '.' {
-		if abs, err := filepath.Abs(path); err == nil {
+		if abs, err := filepath.Abs(path); err == nil && exists(abs) {
 			return abs
 		}
-		return path
-	}
-
-	if path[0] == '/' && runtime.GOOS != "windows" ||
-		strings.IndexByte(path, ':') != -1 {
-		return path
 	}
 
 	abs, err := filepath.Abs(filepath.Join(GOROOT, "src", path))
@@ -56,5 +48,6 @@ func Abs(path string) string {
 			return abs
 		}
 	}
+
 	return path
 }

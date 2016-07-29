@@ -2,18 +2,19 @@ package docu
 
 import (
 	"go/ast"
+	"os"
 	"path/filepath"
 	"strings"
 )
 
 // DefaultFilter 缺省的文件名过滤规则. 过滤掉非 ".go" 和 "_test.go" 结尾的文件
 func DefaultFilter(name string) bool {
-	return filepath.Ext(name) == ".go" && !strings.HasSuffix(name, "_test.go")
+	return ShowTestFilter(name) && !strings.HasSuffix(name, "_test.go")
 }
 
 // ShowTestFilter 允许 "_test.go" 结尾的文件
 func ShowTestFilter(name string) bool {
-	return filepath.Ext(name) == ".go"
+	return len(name) > 0 && name[0] != '_' && name[0] != '.' && strings.HasSuffix(name, ".go")
 }
 
 // ExportedFileFilter 剔除 non-nil file 中所有非导出声明, 返回该 file 是否具有导出声明.
@@ -33,8 +34,8 @@ func ExportedFileFilter(file *ast.File) bool {
 func ExportedDeclFilter(decl ast.Decl) bool {
 	switch decl := decl.(type) {
 	case *ast.FuncDecl:
-		if decl.Recv != nil {
-			return exportedRecvFilter(decl.Recv)
+		if decl.Recv != nil && !exportedRecvFilter(decl.Recv) {
+			return false
 		}
 		return decl.Name.IsExported()
 	case *ast.GenDecl:
@@ -53,6 +54,7 @@ func ExportedDeclFilter(decl ast.Decl) bool {
 
 // exportedRecvFilter 该方法仅仅适用于检测 ast.FuncDecl.Recv 是否导出
 func exportedRecvFilter(fieldList *ast.FieldList) bool {
+
 	for i := 0; i < len(fieldList.List); i++ {
 		switch n := fieldList.List[i].Type.(type) {
 		case *ast.Ident:
@@ -88,4 +90,27 @@ func ExportedSpecFilter(spec ast.Spec) bool {
 		return n.Name.IsExported()
 	}
 	return false
+}
+
+// WalkPath 可遍历 paths 及其子目录或者独立的文件.
+// 若 paths 是包路径或绝对路径, 调用 walk 遍历 paths.
+func WalkPath(paths string, walk filepath.WalkFunc) error {
+	root := Abs(paths)
+	info, err := os.Stat(root)
+	if err != nil || !info.IsDir() {
+		return walk(root, info, err)
+	}
+
+	return filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil || IsPkgDir(info) {
+			return walk(path, info, err)
+		}
+		return filepath.SkipDir
+	})
+}
+
+func IsPkgDir(fi os.FileInfo) bool {
+	name := fi.Name()
+	return fi.IsDir() && len(name) > 0 &&
+		name[0] != '_' && name[0] != '.' && name != "testdata"
 }

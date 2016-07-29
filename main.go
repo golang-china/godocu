@@ -6,9 +6,11 @@ import (
 	"flag"
 	"fmt"
 	"go/ast"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/golang-china/godocu/docu"
 )
@@ -64,8 +66,26 @@ func flagParse() ([]string, docu.Mode) {
 		flag.Usage()
 	}
 
-	if len(paths) == 2 {
-		fi, err := os.Stat(paths[1])
+	if gopath != os.Getenv("GOPATH") {
+		docu.GOPATHS = filepath.SplitList(gopath)
+	}
+	return paths, mode
+}
+
+// 多文档输出分割线
+var sp = "\n\n" + strings.Repeat("/", 80) + "\n\n"
+
+func main() {
+	var source, target string
+	var err error
+	var ok bool
+
+	paths, mode := flagParse()
+
+	source = paths[0]
+	if len(paths) > 1 {
+		target = paths[1]
+		fi, err := os.Stat(target)
 		if err != nil {
 			log.Fatal("target must be an absolute base path of docs, but ", err)
 		}
@@ -74,15 +94,12 @@ func flagParse() ([]string, docu.Mode) {
 		}
 	}
 
-	if gopath != os.Getenv("GOPATH") {
-		docu.GOPATHS = filepath.SplitList(gopath)
+	// 遍历子目录
+	sub := strings.HasSuffix(source, "...")
+	if sub {
+		source = source[:len(source)-3]
 	}
-	return paths, mode
-}
 
-func main() {
-	var err error
-	paths, mode := flagParse()
 	godoc := docu.Godoc
 	if 1<<30&mode != 0 {
 		godoc = docu.DocGo
@@ -91,37 +108,136 @@ func main() {
 	diff := 1<<31&mode != 0
 	if diff {
 		mode -= 1 << 31
-	}
-
-	du := docu.New(mode)
-	err = du.Parse(paths[0], nil)
-	if err != nil {
-		log.Fatal(err)
-	}
-	if !diff {
-		for paths, pkg := range du.Astpkg {
-			err = godoc(os.Stdout, paths, du.FileSet, pkg)
-			if err != nil {
-				log.Fatal(err)
-			}
-		}
+		diffMode(mode, sub, source, target)
 		return
 	}
 
-	od := docu.New(mode)
-	err = od.Parse(filepath.Join(paths[1], paths[0]), nil)
+	output := os.Stdout
+	ch := make(chan interface{})
+
+	go walkPath(ch, sub, source)
+	out := false
+	var du *docu.Docu
+	for i := <-ch; i != nil; i = <-ch {
+		if err, ok = i.(error); !ok {
+			du = docu.New(mode)
+			paths, err = du.Parse(i.(string), nil)
+		}
+		if err != nil {
+			break
+		}
+
+		for _, key := range paths {
+			if out {
+				io.WriteString(output, sp)
+			}
+			out = true
+			err = godoc(output, key, du.FileSet, du.MergePackageFiles(key))
+			if err != nil {
+				ch <- false
+				break
+			}
+		}
+
+		if err == nil {
+			ch <- nil
+		}
+	}
+	close(ch)
 	if err != nil {
 		log.Fatal(err)
 	}
-	for key, _ := range du.Astpkg {
-		_, ok := od.Astpkg[key]
-		if !ok {
-			fmt.Println("[TEXT] PACKAGES", key)
-			return
+
+}
+
+func diffMode(mode docu.Mode, sub bool, source, target string) {
+	var err error
+	var ok bool
+	var paths, tpaths []string
+	var du, tu *docu.Docu
+
+	output := os.Stdout
+	ch := make(chan interface{})
+	go walkPath(ch, sub, source)
+	for i := <-ch; i != nil; i = <-ch {
+		if err, ok = i.(error); !ok {
+			du = docu.New(mode)
+			paths, err = du.Parse(i.(string), nil)
 		}
-		if !docu.Same(os.Stdout, du.MergePackageFiles(key), od.MergePackageFiles(key)) {
-			fmt.Println(", on package", key)
+		if err == nil {
+			if len(paths) == 0 {
+				// BUG: 有可能一个为空目录, 另一个非空
+				ch <- nil
+				continue
+			}
+			tu = docu.New(mode)
+			tpaths, err = tu.Parse( // 处理多包
+				filepath.Join(target, strings.Split(paths[0], "::")[0]), nil)
+		}
+
+		if err != nil {
+			break
+		}
+
+		ok, err = docu.SameText(output, "packages "+strings.Join(paths, ","),
+			"packages "+strings.Join(tpaths, ","))
+		if err != nil {
+			break
+		}
+
+		if !ok {
+			ch <- nil
+			io.WriteString(output, sp)
+			continue
+		}
+
+		for _, key := range paths {
+			ok, err = docu.Same(output, du.MergePackageFiles(key), tu.MergePackageFiles(key))
+			if err != nil {
+				break
+			}
+			if !ok {
+				io.WriteString(output, "FROM: package ")
+				io.WriteString(output, key)
+				io.WriteString(output, sp)
+			}
+		}
+
+		if err == nil {
+			ch <- nil
+		} else {
 			break
 		}
 	}
+
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+// walkPath 通道类型约定:
+//   nil        结束
+//   string     待处理局对路径
+//   error      处理错误
+func walkPath(ch chan interface{}, sub bool, source string) {
+	if strings.HasSuffix(source, ".go") {
+		ch <- source
+		<-ch
+		ch <- nil
+		return
+	}
+	docu.WalkPath(source, func(path string, _ os.FileInfo, err error) error {
+		if err == nil {
+			ch <- path
+		} else {
+			ch <- err
+		}
+		i := <-ch
+
+		if i != nil || !sub || err != nil {
+			return io.EOF
+		}
+		return nil
+	})
+	ch <- nil
 }

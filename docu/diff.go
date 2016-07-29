@@ -3,27 +3,38 @@ package docu
 import (
 	"go/ast"
 	"io"
+	"strconv"
 	"strings"
 )
 
-func sameForm(w io.Writer, title, new, old string) bool {
-	if new == old {
-		return true
-	}
-	if lineString(new) == lineString(old) {
-		fprint(w, "[FORM] ", title)
-	} else {
-		fprint(w, "[TEXT] ", title)
-	}
-	return false
+func SameForm(w io.Writer, source, target string) (same bool, err error) {
+	return sameForm(w, source, target)
 }
 
-func diffText(w io.Writer, title, new, old string) bool {
-	if new == old || lineString(new) == lineString(old) {
-		return true
+func SameText(w io.Writer, source, target string) (same bool, err error) {
+	return sameText(w, source, target)
+}
+
+func sameForm(w io.Writer, source, target string) (same bool, err error) {
+	const prefix = "    "
+	if same = source == target; same {
+		return
 	}
-	fprint(w, "[TEXT] ", title)
-	return false
+	if lineString(source) == lineString(target) {
+		err = fprint(w, "FORM:\n", LineWrapper(source, prefix, 80), "\nDIFF:\n", LineWrapper(target, prefix, 80), nl)
+	} else {
+		err = fprint(w, "TEXT:\n", LineWrapper(source, prefix, 80), "\nDIFF:\n", LineWrapper(target, prefix, 80), nl)
+	}
+	return
+}
+
+func sameText(w io.Writer, source, target string) (same bool, err error) {
+	const prefix = "    "
+	if same = source == target; same {
+		return
+	}
+	err = fprint(w, "TEXT:\n", LineWrapper(source, prefix, 80), "\nDIFF:\n", LineWrapper(target, prefix, 80), nl)
+	return
 }
 
 // lineString 对 str 进行单行合并, 剔除空白行
@@ -39,69 +50,71 @@ func lineString(str string) string {
 	return str
 }
 
-// Same 简单比较并返回两个已排序的 ast.File 是否相同.
-// 遇到任何不同就停止比较, 并数据简单信息.
-func Same(w io.Writer, new, old *ast.File) (same bool) {
-	same = sameForm(w, "package name", new.Name.String(), old.Name.String()) &&
-		sameForm(w, "package doc", new.Doc.Text(), old.Doc.Text())
-
-	if !same {
+// Same 返回两个已排序 ast.File 是否相同, 并输出首个差异.
+func Same(w io.Writer, source, target *ast.File) (same bool, err error) {
+	const nl = "\n\n"
+	same, err = sameText(w, "package "+source.Name.String(), "package "+target.Name.String())
+	if !same || err != nil {
 		return
 	}
 
-	if same && (len(new.Imports) != len(old.Imports) ||
-		ImportsString(new.Imports) != ImportsString(old.Imports)) {
-
-		fprint(w, "[TEXT] imports")
-		return false
+	same, err = sameForm(w, source.Doc.Text(), target.Doc.Text())
+	if !same || err != nil {
+		return
 	}
 
-	if len(new.Decls) != len(old.Decls) {
-		fprint(w, "[TEXT] Decls")
-		return false
+	same, err = sameForm(w, ImportsString(source.Imports), ImportsString(target.Imports))
+	if !same || err != nil {
+		return
 	}
-	nd, od := new.Decls, old.Decls
-	count := len(nd)
+
+	sd, td := source.Decls, target.Decls
+	count, total := len(sd), len(td)
+	same, err = sameText(w, "Decls length "+strconv.Itoa(count), "Decls length "+strconv.Itoa(total))
+	if !same || err != nil {
+		return
+	}
+
 	for i := 0; i < count; i++ {
-		num := NodeNumber(nd[i])
-		if same = num == NodeNumber(od[i]); !same {
-			fprint(w, "[TEXT] Type")
+		num := NodeNumber(sd[i])
+		same, err = sameText(w, numNames[num], numNames[NodeNumber(td[i])])
+		if !same || err != nil {
 			return
 		}
+
 		if num == ImportNum {
 			continue
 		}
+
 		if num == FuncNum || num == MethodNum {
-			a := nd[i].(*ast.FuncDecl)
-			b := od[i].(*ast.FuncDecl)
-			n, o := FuncLit(a), FuncLit(b)
-			if same = n == o; !same {
-				fprint(w, "[TEXT] ", n, " <> ", o)
-				return
+			a := sd[i].(*ast.FuncDecl)
+			b := td[i].(*ast.FuncDecl)
+			same, err = sameText(w, FuncLit(a), FuncLit(b))
+			if same && err == nil {
+				same, err = sameForm(w, a.Doc.Text(), b.Doc.Text())
 			}
-			if same = sameForm(w, "doc "+n, a.Doc.Text(), b.Doc.Text()); !same {
+			if !same || err != nil {
 				return
 			}
 			continue
 		}
-		a := nd[i].(*ast.GenDecl)
-		b := nd[i].(*ast.GenDecl)
+		a := sd[i].(*ast.GenDecl)
+		b := td[i].(*ast.GenDecl)
 		if a == nil || b == nil {
 			continue
 		}
-		if same = len(a.Specs) == len(b.Specs); !same {
-			fprint(w, "[TEXT] ", a.Tok.String(), " length")
+		same, err = sameText(w, "Specs length "+strconv.Itoa(len(a.Specs)), "Specs length "+strconv.Itoa(len(b.Specs)))
+		if same && err == nil {
+			same, err = sameForm(w, a.Doc.Text(), b.Doc.Text())
+		}
+		if !same || err != nil {
 			return
 		}
-		if same = sameForm(w, a.Tok.String(), a.Doc.Text(), b.Doc.Text()); !same {
-			return
-		}
+
 		c := len(a.Specs)
 		for i := 0; i < c; i++ {
-			n := SpecIdentLit(a.Specs[i])
-			o := SpecIdentLit(b.Specs[i])
-			if same = n == o; !same {
-				fprint(w, "[TEXT] ", a.Tok.String(), " ", n, " <> ", o)
+			same, err = sameText(w, SpecIdentLit(a.Specs[i]), SpecIdentLit(b.Specs[i]))
+			if !same || err != nil {
 				return
 			}
 		}

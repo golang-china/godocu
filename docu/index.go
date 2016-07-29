@@ -17,6 +17,16 @@ const (
 	OtherNum = 1 << 32
 )
 
+var numNames = map[int]string{
+	ImportNum: "Import",
+	ConstNum:  "Const",
+	VarNum:    "Var",
+	TypeNum:   "Type",
+	FuncNum:   "Func",
+	MethodNum: "Method",
+	OtherNum:  "Other",
+}
+
 // NodeNumber 返回值用于节点排序. 随算法更新同类型节点该返回值会变更.
 func NodeNumber(node ast.Node) int {
 	switch n := node.(type) {
@@ -42,7 +52,7 @@ func NodeNumber(node ast.Node) int {
 }
 
 /*
- * SortDecl 实现 sort.Interface.
+ * SortDecl 实现 sort.Interface. 按 Ident字面值排序.
  */
 type SortDecl []ast.Decl
 
@@ -60,13 +70,7 @@ func (s SortDecl) Less(i, j int) bool {
 		if len(si) == 0 || len(sj) == 0 {
 			break
 		}
-		switch in {
-		case ConstNum, VarNum: // const, var
-			return SpecIdentLit(si[0]) < SpecIdentLit(sj[0])
-		case TypeNum: // type
-			return si[0].(*ast.TypeSpec).Name.String() <
-				sj[0].(*ast.TypeSpec).Name.String()
-		}
+		return SpecIdentLit(si[0]) < SpecIdentLit(sj[0])
 	case FuncNum, MethodNum:
 		return FuncLit(s[i].(*ast.FuncDecl)) < FuncLit(s[j].(*ast.FuncDecl))
 	}
@@ -84,10 +88,12 @@ func (s SortImports) Less(i, j int) bool {
 
 // Index 对 file 顶级声明重新排序. 按照:
 //
-//	Consts, Types.Consts, Vars, Funcs, Types.Funcs
+//	Imports, Consts, Vars, Types, Funcs, Types.Funcs
 //
 func Index(file *ast.File) {
-	sort.Sort(SortDecl(file.Decls))
+	if file != nil {
+		sort.Sort(SortDecl(file.Decls))
+	}
 }
 
 // IndexNormal 对 file 顶级声明进行 normalize 处理.

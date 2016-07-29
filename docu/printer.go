@@ -8,7 +8,6 @@ import (
 	"go/printer"
 	"go/token"
 	"io"
-	"sort"
 	"strings"
 	"unicode"
 
@@ -161,12 +160,8 @@ func fprint(output io.Writer, i ...interface{}) (err error) {
 
 var config = printer.Config{Mode: printer.UseSpaces, Tabwidth: 4}
 
-// Godoc 仿 godoc 风格向 output 输出 ast.Package.
-func Godoc(output io.Writer, paths string, fset *token.FileSet, pkg *ast.Package) (err error) {
-	file := ast.MergePackageFiles(pkg,
-		ast.FilterFuncDuplicates|ast.FilterUnassociatedComments|ast.FilterImportDuplicates,
-	)
-	sort.Sort(SortImports(file.Imports))
+// Godoc 仿 godoc 风格向 output 输出已排序的 ast.File.
+func Godoc(output io.Writer, paths string, fset *token.FileSet, file *ast.File) (err error) {
 	text := file.Name.String()
 	if err = fprint(output, "PACKAGE DOCUMENTATION\n\npackage ", text, nl); err != nil {
 		return
@@ -194,7 +189,6 @@ func Godoc(output io.Writer, paths string, fset *token.FileSet, pkg *ast.Package
 		return
 	}
 
-	Index(file)
 	step := ImportNum
 	for _, decl := range file.Decls {
 		num := NodeNumber(decl)
@@ -262,12 +256,8 @@ func Godoc(output io.Writer, paths string, fset *token.FileSet, pkg *ast.Package
 	return
 }
 
-// DocGo 以 go source 风格向 output 输出 ast.Package.
-func DocGo(output io.Writer, paths string, fset *token.FileSet, pkg *ast.Package) (err error) {
-	file := ast.MergePackageFiles(pkg,
-		ast.FilterFuncDuplicates|ast.FilterUnassociatedComments|ast.FilterImportDuplicates,
-	)
-	sort.Sort(SortImports(file.Imports))
+// DocGo 以 go source 风格向 output 输出已排序的 ast.File.
+func DocGo(output io.Writer, paths string, fset *token.FileSet, file *ast.File) (err error) {
 	if file.Doc != nil {
 		err = ToSource(output, file.Doc.Text())
 	}
@@ -297,8 +287,6 @@ func DocGo(output io.Writer, paths string, fset *token.FileSet, pkg *ast.Package
 	if err != nil {
 		return
 	}
-
-	Index(file)
 
 	for _, decl := range file.Decls {
 		num := NodeNumber(decl)
