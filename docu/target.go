@@ -10,6 +10,28 @@ import (
 // SrcElem 本地文件系统中的 "/src/".
 const SrcElem = string(os.PathSeparator) + "src" + string(os.PathSeparator)
 
+// LangNormal 对 lang 进行检查并格式化.
+// 如果 lang 不符合要求, 返回空字符串.
+func LangNormal(lang string) string {
+	ss := strings.SplitN(strings.ToLower(lang), "_", 2)
+	if len(ss) == 0 {
+		return ""
+	}
+	lang = ss[0]
+	if len(ss) == 2 {
+		lang += "_" + strings.ToUpper(ss[1])
+	}
+	for i := 0; i < len(lang); i++ {
+		if lang[i] == '_' ||
+			lang[i] >= 'a' && lang[i] <= 'z' ||
+			lang[i] >= 'A' && lang[i] <= 'Z' {
+			continue
+		}
+		return ""
+	}
+	return lang
+}
+
 // Target 创建(覆盖)统一风格的本地文件.
 type Target string
 
@@ -26,9 +48,9 @@ func (t Target) Create(path, lang, ext string) (file *os.File, err error) {
 	if t == "" {
 		return os.Stdout, nil
 	}
-
+	lang = LangNormal(lang)
 	if lang == "" || path == "" {
-		err = errors.New("Target.Create: empty path or lang not allowed.")
+		err = errors.New("Target.Create: invaild path or lang.")
 		return
 	}
 	if ext != "" && ext[0] != '.' {

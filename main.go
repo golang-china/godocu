@@ -36,7 +36,7 @@ func flagParse() ([]string, docu.Mode, string) {
 	flag.Usage = usage
 	flag.StringVar(&docu.GOROOT, "goroot", docu.GOROOT, "Go root directory")
 	flag.StringVar(&gopath, "gopath", os.Getenv("GOPATH"), "specifies gopath")
-	flag.StringVar(&lang, "lang", "origin", "the lang pattern for the output file")
+	flag.StringVar(&lang, "lang", "origin", "the lang pattern for the output file, form like xx[_XX]")
 	flag.BoolVar(&u, "u", false, "show unexported symbols as well as exported")
 	flag.BoolVar(&cmd, "cmd", false, "show symbols with package docs even if package is a command")
 	flag.BoolVar(&test, "test", false, "show symbols with package docs even if package is a testing")
