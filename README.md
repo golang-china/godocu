@@ -37,6 +37,8 @@ usage: godocu package [target]
       specifies gopath (default $GOPATH)
   -goroot string
       Go root directory (default $GOROOT)
+  -lang string
+      the lang pattern for the output file (default "origin")
   -test
       show symbols with package docs even if package is a testing
   -u  show unexported symbols as well as exported
@@ -86,5 +88,6 @@ $ godocu go...
 $ godocu -goroot=/usr/local/Cellar/go/1.5.2/libexec -diff go... /usr/local/Cellar/go/1.6/libexec/src/
 ```
 
+如果目录结构不同, 只输出结构不同的, 不进行文档对比.
 
 [docu]: https://godoc.org/github.com/golang-china/godocu/docu

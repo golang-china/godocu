@@ -28,14 +28,15 @@ func usage() {
 	os.Exit(2)
 }
 
-func flagParse() ([]string, docu.Mode) {
-	var gopath string
+func flagParse() ([]string, docu.Mode, string) {
+	var gopath, lang string
 	var mode docu.Mode
 	var u, cmd, test, source, diff bool
 
 	flag.Usage = usage
 	flag.StringVar(&docu.GOROOT, "goroot", docu.GOROOT, "Go root directory")
 	flag.StringVar(&gopath, "gopath", os.Getenv("GOPATH"), "specifies gopath")
+	flag.StringVar(&lang, "lang", "origin", "the lang pattern for the output file")
 	flag.BoolVar(&u, "u", false, "show unexported symbols as well as exported")
 	flag.BoolVar(&cmd, "cmd", false, "show symbols with package docs even if package is a command")
 	flag.BoolVar(&test, "test", false, "show symbols with package docs even if package is a testing")
@@ -69,7 +70,7 @@ func flagParse() ([]string, docu.Mode) {
 	if gopath != os.Getenv("GOPATH") {
 		docu.GOPATHS = filepath.SplitList(gopath)
 	}
-	return paths, mode
+	return paths, mode, lang
 }
 
 // 多文档输出分割线
@@ -80,7 +81,7 @@ func main() {
 	var err error
 	var ok bool
 
-	paths, mode := flagParse()
+	paths, mode, lang := flagParse()
 
 	source = paths[0]
 	if len(paths) > 1 {
@@ -122,7 +123,6 @@ func main() {
 
 	fs := docu.Target(target)
 	ch := make(chan interface{})
-	lang := "origin"
 	go walkPath(ch, sub, source)
 	out := false
 	var du *docu.Docu
@@ -201,8 +201,21 @@ func diffMode(mode docu.Mode, sub bool, source, target string) {
 	var du, tu *docu.Docu
 
 	output := os.Stdout
+	// 如果目录结构不同, 不进行文档对比
+	if sub {
+		d1 := diffTree(mode, source, target)
+		if d1 {
+			fmt.Fprintf(output, sp)
+		}
+		d2 := diffTree(mode, target, source)
+		if d1 || d2 {
+			return
+		}
+	}
+
 	ch := make(chan interface{})
 	go walkPath(ch, sub, source)
+
 	for i := <-ch; i != nil; i = <-ch {
 		if err, ok = i.(error); !ok {
 			du = docu.New(mode)
@@ -260,4 +273,44 @@ func diffMode(mode docu.Mode, sub bool, source, target string) {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+// diffTree 比较目录结构是否相同
+func diffTree(mode docu.Mode, source, target string) (diff bool) {
+	var ok bool
+	var err error
+	var fi os.FileInfo
+	ch := make(chan interface{})
+	go walkPath(ch, true, source)
+	pos := len(source)
+	if strings.LastIndexAny(source, `\/`)+1 != pos {
+		pos++
+	}
+	output := os.Stdout
+	for i := <-ch; i != nil; i = <-ch {
+		if err, ok = i.(error); !ok {
+			source = i.(string)
+			source = source[pos:]
+		}
+		if err != nil {
+			break
+		}
+		fi, err = os.Stat(filepath.Join(target, source))
+		if os.IsNotExist(err) {
+			diff = true
+			_, err = fmt.Fprintf(output, "TEXT:\n    path %s\nDIFF:\n    none\n\n", source)
+		} else if err == nil && !fi.IsDir() {
+			diff = true
+			_, err = fmt.Fprintf(output, "TEXT:\n    path %s\nDIFF:\n    is file\n\n", source)
+		}
+		if err != nil {
+			break
+		}
+		ch <- nil
+	}
+	close(ch)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return
 }
