@@ -44,12 +44,14 @@ usage: godocu package [target]
   -u  show unexported symbols as well as exported
 ```
 
-# Example
+# Diff
+
+可选参数 `-diff` 可比较两个包, 输出首个差异信息.
 
 比较 reflect 在两个版本中的不同
 
 ```shell
-$ godocu -goroot=/usr/local/Cellar/go/1.5.3/libexec -diff reflect /usr/local/Cellar/go/1.5.2/libexec/src
+$ godocu -goroot=/usr/local/Cellar/go/1.5.2/libexec -diff reflect /usr/local/Cellar/go/1.6.2/libexec/src
 ```
 
 输出
@@ -73,6 +75,65 @@ FROM: package reflect
     顶级声明长度 113
 来自: package reflect
 ```
+
+
+```shell
+$ godocu -goroot=/usr/local/Cellar/go/1.5.2/libexec -diff go/types /usr/local/Cellar/go/1.6.2/libexec/src
+```
+
+输出
+
+```
+TEXT:
+    Package types declares the data types and implements
+    the algorithms for type-checking of Go packages. Use
+    Config.Check to invoke the type checker for a package.
+    Alternatively, create a new type checked with NewChecker
+    and invoke it incrementally by calling Checker.Files.
+
+    Type-checking consists of several interdependent phases:
+
+    Name resolution maps each identifier (ast.Ident) in the program to the
+    language object (Object) it denotes.
+    Use Info.{Defs,Uses,Implicits} for the results of name resolution.
+
+    Constant folding computes the exact constant value (constant.Value)
+    for every expression (ast.Expr) that is a compile-time constant.
+    Use Info.Types[expr].Value for the results of constant folding.
+
+    Type inference computes the type (Type) of every expression (ast.Expr)
+    and checks for compliance with the language specification.
+    Use Info.Types[expr].Type for the results of type inference.
+
+DIFF:
+    Package types declares the data types and implements
+    the algorithms for type-checking of Go packages. Use
+    Config.Check to invoke the type checker for a package.
+    Alternatively, create a new type checked with NewChecker
+    and invoke it incrementally by calling Checker.Files.
+
+    Type-checking consists of several interdependent phases:
+
+    Name resolution maps each identifier (ast.Ident) in the program to the
+    language object (Object) it denotes.
+    Use Info.{Defs,Uses,Implicits} for the results of name resolution.
+
+    Constant folding computes the exact constant value (constant.Value)
+    for every expression (ast.Expr) that is a compile-time constant.
+    Use Info.Types[expr].Value for the results of constant folding.
+
+    Type inference computes the type (Type) of every expression (ast.Expr)
+    and checks for compliance with the language specification.
+    Use Info.Types[expr].Type for the results of type inference.
+
+    For a tutorial, see https://golang.org/s/types-tutorial.
+
+FROM: package go/types
+```
+
+
+go 1.6.2 的注释多了一行 `For a tutorial, see https://golang.org/s/types-tutorial.`.
+
 
 如果看到的不是 `TEXT:` 而是 `FORM:` 表示折叠为一行后值相同, 即格式发生变化,
 
