@@ -8,7 +8,6 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
-	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -185,12 +184,8 @@ func (du *Docu) parseFromVfs(fs vfs.FileSystem, dir string,
 
 func (du *Docu) parseFile(abs, name string, src interface{}) (string, error) {
 	none := name == ""
-	importPaths := path.Clean(abs)
-	if src == nil {
-		abs = filepath.Join(abs, name)
-	} else {
-		abs = path.Join(importPaths, name)
-	}
+	importPaths := strings.Replace(abs, `\`, `/`, -1)
+	abs = filepath.Join(abs, name)
 
 	pos := strings.LastIndex(importPaths, "/src/")
 	if pos != -1 {
@@ -230,11 +225,7 @@ func (du *Docu) parseFile(abs, name string, src interface{}) (string, error) {
 		du.astpkg[importPaths] = pkg
 	}
 	if none {
-		if src == nil {
-			abs = filepath.Join(abs, "_"+strconv.Itoa(len(pkg.Files))+".go")
-		} else {
-			abs = path.Join(abs, "_"+strconv.Itoa(len(pkg.Files))+".go")
-		}
+		abs = filepath.Join(abs, "_"+strconv.Itoa(len(pkg.Files))+".go")
 	}
 	if _, ok = pkg.Files[abs]; ok {
 		return importPaths, errors.New("Duplicates: " + abs)

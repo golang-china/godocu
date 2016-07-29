@@ -76,7 +76,7 @@ func flagParse() ([]string, docu.Mode) {
 var sp = "\n\n" + strings.Repeat("/", 80) + "\n\n"
 
 func main() {
-	var source, target string
+	var source, target, ext string
 	var err error
 	var ok bool
 
@@ -86,11 +86,14 @@ func main() {
 	if len(paths) > 1 {
 		target = paths[1]
 		fi, err := os.Stat(target)
-		if err != nil {
-			log.Fatal("target must be an absolute base path of docs, but ", err)
-		}
-		if !fi.IsDir() {
+		if err == nil && !fi.IsDir() {
 			log.Fatal("target must be an absolute base path of docs")
+		}
+		if os.IsNotExist(err) {
+			err = os.MkdirAll(target, 0777)
+		}
+		if err != nil {
+			log.Fatal(err)
 		}
 	}
 
@@ -98,11 +101,16 @@ func main() {
 	sub := strings.HasSuffix(source, "...")
 	if sub {
 		source = source[:len(source)-3]
+		if source == "" {
+			source = docu.GOROOT + docu.SrcElem
+		}
 	}
 
 	godoc := docu.Godoc
+	ext = ".text"
 	if 1<<30&mode != 0 {
 		godoc = docu.DocGo
+		ext = ".go"
 		mode -= 1 << 30
 	}
 	diff := 1<<31&mode != 0
@@ -112,42 +120,78 @@ func main() {
 		return
 	}
 
-	output := os.Stdout
+	fs := docu.Target(target)
 	ch := make(chan interface{})
-
+	lang := "origin"
 	go walkPath(ch, sub, source)
 	out := false
 	var du *docu.Docu
+	var output *os.File
 	for i := <-ch; i != nil; i = <-ch {
 		if err, ok = i.(error); !ok {
 			du = docu.New(mode)
-			paths, err = du.Parse(i.(string), nil)
+			source = i.(string)
+			paths, err = du.Parse(source, nil)
 		}
 		if err != nil {
 			break
 		}
-
 		for _, key := range paths {
-			if out {
-				io.WriteString(output, sp)
-			}
-			out = true
-			err = godoc(output, key, du.FileSet, du.MergePackageFiles(key))
+			output, err = fs.Create(key, lang, ext)
 			if err != nil {
-				ch <- false
+				break
+			}
+			if target == "" {
+				if out {
+					io.WriteString(output, sp)
+				}
+				out = true
+			}
+			err = godoc(output, key, du.FileSet, du.MergePackageFiles(key))
+			if target != "" {
+				output.Close()
+			}
+			if err != nil {
 				break
 			}
 		}
-
-		if err == nil {
-			ch <- nil
+		if err != nil {
+			break
 		}
+		ch <- nil
 	}
 	close(ch)
 	if err != nil {
 		log.Fatal(err)
 	}
 
+}
+
+// walkPath 通道类型约定:
+//   nil        结束
+//   string     待处理局对路径
+//   error      处理错误
+func walkPath(ch chan interface{}, sub bool, source string) {
+	if strings.HasSuffix(source, ".go") {
+		ch <- source
+		<-ch
+		ch <- nil
+		return
+	}
+	docu.WalkPath(source, func(path string, _ os.FileInfo, err error) error {
+		if err == nil {
+			ch <- path
+		} else {
+			ch <- err
+		}
+		i := <-ch
+
+		if i != nil || !sub || err != nil {
+			return io.EOF
+		}
+		return nil
+	})
+	ch <- nil
 }
 
 func diffMode(mode docu.Mode, sub bool, source, target string) {
@@ -193,51 +237,27 @@ func diffMode(mode docu.Mode, sub bool, source, target string) {
 
 		for _, key := range paths {
 			ok, err = docu.Same(output, du.MergePackageFiles(key), tu.MergePackageFiles(key))
+			if !ok && err == nil {
+				_, err = io.WriteString(output, "FROM: package ")
+				if err == nil {
+					_, err = io.WriteString(output, key)
+				}
+				if err == nil {
+					_, err = io.WriteString(output, sp)
+				}
+			}
 			if err != nil {
 				break
 			}
-			if !ok {
-				io.WriteString(output, "FROM: package ")
-				io.WriteString(output, key)
-				io.WriteString(output, sp)
-			}
 		}
 
-		if err == nil {
-			ch <- nil
-		} else {
+		if err != nil {
 			break
 		}
+		ch <- nil
 	}
-
+	close(ch)
 	if err != nil {
 		log.Fatal(err)
 	}
-}
-
-// walkPath 通道类型约定:
-//   nil        结束
-//   string     待处理局对路径
-//   error      处理错误
-func walkPath(ch chan interface{}, sub bool, source string) {
-	if strings.HasSuffix(source, ".go") {
-		ch <- source
-		<-ch
-		ch <- nil
-		return
-	}
-	docu.WalkPath(source, func(path string, _ os.FileInfo, err error) error {
-		if err == nil {
-			ch <- path
-		} else {
-			ch <- err
-		}
-		i := <-ch
-
-		if i != nil || !sub || err != nil {
-			return io.EOF
-		}
-		return nil
-	})
-	ch <- nil
 }

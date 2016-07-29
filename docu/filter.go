@@ -102,15 +102,25 @@ func WalkPath(paths string, walk filepath.WalkFunc) error {
 	}
 
 	return filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil || IsPkgDir(info) {
+		ispkg := IsPkgDir(info)
+		if err == nil && info.IsDir() {
+			if info.Name() == "src" {
+				return nil
+			}
+			if !ispkg {
+				return filepath.SkipDir
+			}
+		}
+		if err != nil || ispkg {
 			return walk(path, info, err)
 		}
-		return filepath.SkipDir
+		return nil
 	})
 }
 
 func IsPkgDir(fi os.FileInfo) bool {
 	name := fi.Name()
 	return fi.IsDir() && len(name) > 0 &&
-		name[0] != '_' && name[0] != '.' && name != "testdata"
+		name[0] != '_' && name[0] != '.' &&
+		name != "testdata" && name != "vendor"
 }

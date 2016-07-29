@@ -71,13 +71,13 @@ func LineWrapper(text string, prefix string, limit int) (wrap string) {
 		}
 		switch r {
 		case '\r':
-			wrap += prefix + last + word + nl
+			wrap += strings.TrimRight(prefix+last+word, " ") + nl
 			w, last, word = 0, "", ""
 			isIndent, lf = false, r
 			continue
 		case '\n':
 			if lf != '\r' {
-				wrap += prefix + last + word + nl
+				wrap += strings.TrimRight(prefix+last+word, " ") + nl
 				w, last, word = 0, "", ""
 			}
 			lf, isIndent = r, false
