@@ -121,7 +121,7 @@ func LineWrapper(text string, prefix string, limit int) (wrap string) {
 				wrap += prefix + last + word + string(r) + nl
 				w, last = 0, ""
 			} else {
-				wrap += prefix + last + word + nl
+				wrap += strings.TrimRight(prefix+last+word, " ") + nl
 				w, last = 0, string(r)
 			}
 			word = ""
@@ -137,10 +137,10 @@ func LineWrapper(text string, prefix string, limit int) (wrap string) {
 		if keep || w < limit {
 			last, word = last+word+string(r), ""
 		} else if w == limit || r == ' ' || r == '　' {
-			wrap += prefix + last + word + string(r) + nl
+			wrap += strings.TrimRight(prefix+last+word+string(r), " ") + nl
 			w, last, word = 0, "", ""
 		} else {
-			wrap += prefix + last + nl
+			wrap += strings.TrimRight(prefix+last, " ") + nl
 			w, last, word = n, "", word+string(r)
 		}
 	}

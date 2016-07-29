@@ -42,10 +42,7 @@ func lineString(str string) string {
 	s := strings.Split(str, "\n")
 	str = ""
 	for i := 0; i < len(s); i++ {
-		v := strings.TrimSpace(s[i])
-		if v != "" {
-			str += v
-		}
+		str += " " + strings.TrimSpace(s[i])
 	}
 	return str
 }
