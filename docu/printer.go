@@ -258,7 +258,9 @@ func Godoc(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 
 // DocGo 以 go source 风格向 output 输出已排序的 ast.File.
 func DocGo(output io.Writer, paths string, fset *token.FileSet, file *ast.File) (err error) {
-	if file.Doc != nil {
+	err = fprint(output, "// +build ingore\n\n")
+
+	if err == nil && file.Doc != nil {
 		err = ToSource(output, file.Doc.Text())
 	}
 	if err != nil {
