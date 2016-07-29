@@ -167,13 +167,17 @@ func Godoc(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 		return
 	}
 
-	if pos := strings.IndexByte(paths, ':'); pos == -1 {
-		text = `    import "` + paths + `"`
-	} else if paths[pos:] == ":main" {
+	if pos := strings.LastIndex(paths, "::"); pos != -1 {
+		paths = paths[:pos]
+	}
+
+	if text == "main" {
 		// BUG: 可能是 +build ignore
-		text = `    EXECUTABLE PROGRAM IN PACKAGE ` + paths[:pos]
-	} else if paths[pos:] == ":test" || strings.HasSuffix(paths, "_test") {
-		text = `    go test ` + paths[:pos]
+		text = `    EXECUTABLE PROGRAM IN PACKAGE ` + paths
+	} else if text == "test" || strings.HasSuffix(text, "_test") {
+		text = `    go test ` + paths
+	} else {
+		text = `    import "` + paths + `"`
 	}
 
 	if err = fprint(output, text, nl); err == nil && file.Doc != nil {
@@ -253,11 +257,29 @@ func Godoc(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 		}
 		genDecl.Doc = docGroup
 	}
+	if err != nil {
+		return
+	}
+
+	if text = License(file); text != "" {
+		if err = fprint(output, "\nLICENSE\n\n"); err == nil {
+			err = ToText(output, text)
+		}
+	}
+
 	return
 }
 
 // DocGo 以 go source 风格向 output 输出已排序的 ast.File.
 func DocGo(output io.Writer, paths string, fset *token.FileSet, file *ast.File) (err error) {
+	var text string
+	text = License(file)
+	if text != "" {
+		if err = ToSource(output, text); err == nil {
+			err = fprint(output, nl)
+		}
+	}
+
 	err = fprint(output, "// +build ingore\n\n")
 
 	if err == nil && file.Doc != nil {
@@ -267,9 +289,9 @@ func DocGo(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 		return
 	}
 
-	text := file.Name.String()
+	text = file.Name.String()
 
-	if pos := strings.IndexByte(paths, ':'); pos != -1 {
+	if pos := strings.LastIndex(paths, "::"); pos != -1 {
 		paths = paths[:pos]
 	}
 
@@ -329,5 +351,6 @@ func DocGo(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 		}
 		genDecl.Doc = docGroup
 	}
+
 	return
 }

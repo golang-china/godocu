@@ -5,6 +5,7 @@ package docu
 import (
 	"errors"
 	"go/ast"
+	"go/doc"
 	"go/parser"
 	"go/token"
 	"os"
@@ -64,6 +65,22 @@ func (du *Docu) MergePackageFiles(paths string) (file *ast.File) {
 
 	file = ast.MergePackageFiles(pkg,
 		ast.FilterFuncDuplicates|ast.FilterUnassociatedComments|ast.FilterImportDuplicates)
+
+	// 取出 License 放到 file.Comments
+	for _, f := range pkg.Files {
+		for _, comm := range f.Comments {
+			lic := comm.Text()
+			if doc.Synopsis(lic) == "" &&
+				"copyright" == strings.ToLower(strings.SplitN(lic, " ", 2)[0]) {
+				file.Comments = []*ast.CommentGroup{comm}
+				break
+			}
+			lic = ""
+		}
+		if len(file.Comments) != 0 {
+			break
+		}
+	}
 
 	sort.Sort(SortImports(file.Imports))
 	Index(file)
