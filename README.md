@@ -84,9 +84,9 @@ FROM: package reflect
 意思是
 
 ```
-[内容]:
+内容:
     func DeepEqual(x, y interface{}) bool
-[不同]:
+不同:
     func DeepEqual(a1, a2 interface{}) bool
 来自: package reflect
 ```
@@ -234,13 +234,13 @@ go 1.6.2 的 Doc 注释多了一行 `For a tutorial, see https://golang.org/s/ty
 遍历
 
 ```shell
-$ godocu go...
+$ godocu code go...
 ```
 
 遍历比较
 
 ```shell
-$ godocu -goroot=/usr/local/Cellar/go/1.5.2/libexec -diff go... /usr/local/Cellar/go/1.6/libexec/src/
+$ godocu diff -goroot=/usr/local/Cellar/go/1.5.2/libexec go... /usr/local/Cellar/go/1.6/libexec/src/
 ```
 
 如果目录结构不同, 只输出结构不同的, 不进行文档对比.
