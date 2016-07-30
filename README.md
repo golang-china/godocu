@@ -12,6 +12,7 @@ godocu 基于 [docu] 实现的命令行工具, 从 Go 源码提取并生成文�
   - 可提取测试包文档
   - 简单比较包文档的不同之处
   - 遍历目录
+  - 合并不同版本的注释
 
 该工具在 Golang 官方包下测试通过, 非官方包请核对输出结果.
 
@@ -34,6 +35,7 @@ The commands are:
     first   compare the source and target, the first difference output
     code    prints a formatted string to target as Go source code
     text    prints a formatted string to target as godoc
+    merge   merge source doc to target
 
 The source are:
 

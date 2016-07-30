@@ -15,6 +15,10 @@ func FormDiff(w io.Writer, source, target string) (diff bool, err error) {
 	return
 }
 
+func DiffFormOnly(source, target string) bool {
+	return source != target && lineString(source) == lineString(target)
+}
+
 // TextDiff 对比输出 source, target 的值差异, 返回是否有差异及发生的错误.
 func TextDiff(w io.Writer, source, target string) (diff bool, err error) {
 	if diff = source != target; diff {

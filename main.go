@@ -3,6 +3,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"go/ast"
@@ -28,6 +29,7 @@ The commands are:
     first   compare the source and target, the first difference output
     code    prints a formatted string to target as Go source code
     text    prints a formatted string to target as godoc
+    merge   merge source doc to target
 
 The source are:
 
@@ -106,12 +108,15 @@ func main() {
 			source = docu.GOROOT + docu.SrcElem
 		}
 	}
-	if target == "" && (command == "first" || command == "diff") {
+	if target == "" &&
+		(command == "first" || command == "diff" || command == "merge") {
 		command = "help"
 	}
 	ch := make(chan interface{})
 	go walkPath(ch, sub, source)
 	switch command {
+	case "code", "text":
+		err = showMode(command, mode, ch, target, lang)
 	case "first", "diff":
 		// 如果目录结构不同, 不进行文档对比
 		if sub {
@@ -125,8 +130,8 @@ func main() {
 			}
 		}
 		err = diffMode(command, mode, ch, source, target)
-	case "code", "text":
-		err = showMode(command, mode, ch, target, lang)
+	case "merge":
+		err = mergeMode(mode, ch, source, target, lang)
 	default:
 		<-ch
 		ch <- false
@@ -173,7 +178,10 @@ func showMode(command string, mode docu.Mode, ch chan interface{}, target, lang 
 	var paths []string
 	var du *docu.Docu
 	var output *os.File
-
+	merge := mode&1<<30 != 0
+	if merge {
+		mode -= 1 << 30
+	}
 	fs := docu.Target(target)
 
 	docgo := docu.DocGo
@@ -320,6 +328,70 @@ func diffTree(mode docu.Mode, source, target string) (diff bool) {
 	close(ch)
 	if err != nil {
 		log.Fatal(err)
+	}
+	return
+}
+
+func mergeMode(mode docu.Mode, ch chan interface{}, source, target, lang string) (err error) {
+	var ok, diff bool
+	var paths, tpaths []string
+	var du, tu *docu.Docu
+
+	//fs := docu.Target(target)
+
+	for i := <-ch; i != nil; i = <-ch {
+		if err, ok = i.(error); !ok {
+			du = docu.New(mode)
+			paths, err = du.Parse(i.(string), nil)
+		}
+		if err == nil {
+			if len(paths) == 0 {
+				// BUG: 有可能一个为空目录, 另一个非空
+				ch <- nil
+				continue
+			}
+			tu = docu.New(mode)
+			tpaths, err = tu.Parse( // 处理多包
+				filepath.Join(target, strings.Split(paths[0], "::")[0]), nil)
+		}
+
+		if err != nil {
+			break
+		}
+		diff, err = docu.TextDiff(os.Stdout, "packages "+strings.Join(paths, ","),
+			"packages "+strings.Join(tpaths, ","))
+
+		if err != nil {
+			break
+		}
+
+		if diff {
+			err = errors.New("the difference between source and target")
+			break
+		}
+
+		for _, key := range paths {
+			src := du.MergePackageFiles(key)
+			dis := tu.MergePackageFiles(key)
+			if len(dis.Imports) == 0 {
+				dis.Imports = src.Imports
+			}
+
+			if !docu.DiffFormOnly(src.Doc.Text(), dis.Doc.Text()) {
+				docu.MergeDoc(src.Doc, dis.Doc)
+			}
+
+			docu.MergeDecls(src.Decls, dis.Decls)
+			err = docu.DocGo(os.Stdout, key, tu.FileSet, dis)
+			if err != nil {
+				break
+			}
+		}
+
+		if err != nil {
+			break
+		}
+		ch <- nil
 	}
 	return
 }

@@ -154,7 +154,9 @@ func LineWrapper(text string, prefix string, limit int) (wrap string) {
 }
 
 func fprint(output io.Writer, i ...interface{}) (err error) {
-	_, err = fmt.Fprint(output, i...)
+	if output != nil {
+		_, err = fmt.Fprint(output, i...)
+	}
 	return err
 }
 
