@@ -88,9 +88,45 @@ func ExportedSpecFilter(spec ast.Spec) bool {
 		}
 		return len(n.Names) != 0
 	case *ast.TypeSpec:
-		return n.Name.IsExported()
+		if !n.Name.IsExported() {
+			break
+		}
+		exportedExprFilter(n.Type)
 	}
 	return false
+}
+
+// 剔除非导出成员, 返回是否还有可见成员
+func exportedExprFilter(expr ast.Expr) bool {
+	switch n := expr.(type) {
+	case *ast.StructType:
+		if n.Fields == nil {
+			break
+		}
+		list := n.Fields.List
+		for i := 0; i < len(list); {
+			names := list[i].Names
+			for i := 0; i < len(names); {
+				if names[i].IsExported() {
+					i++
+					continue
+				}
+				copy(names[i:], names[i+1:])
+				names = names[:len(names)-1]
+			}
+			list[i].Names = names
+			if len(names) != 0 {
+				i++
+				continue
+			}
+			copy(list[i:], list[i+1:])
+			list = list[:len(list)-1]
+		}
+		n.Fields.List = list
+		return len(list) != 0
+	}
+
+	return true
 }
 
 // WalkPath 可遍历 paths 及其子目录或者独立的文件.
