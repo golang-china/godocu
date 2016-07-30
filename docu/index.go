@@ -77,6 +77,52 @@ func (s SortDecl) Less(i, j int) bool {
 	return false
 }
 
+// Search 查找 identLit 所在的顶级声明.
+func (s SortDecl) Search(identLit string) ast.Decl {
+	if identLit == "" || identLit == "<nil>" {
+		return nil
+	}
+	for _, node := range []ast.Decl(s) {
+		switch n := node.(type) {
+		case *ast.GenDecl:
+			for _, spec := range n.Specs {
+				if SpecIdentLit(spec) == identLit {
+					return node
+				}
+			}
+		case *ast.FuncDecl:
+			lit := FuncIdentLit(n)
+			if lit == identLit {
+				return node
+			}
+			if lit > identLit {
+				break
+			}
+		default:
+			break
+		}
+	}
+	return nil
+}
+
+// SearchSpec 查找 specIdentLit 对应的 ast.Spec.
+func (s SortDecl) SearchSpec(specIdentLit string) ast.Spec {
+	if specIdentLit == "" || specIdentLit == "<nil>" {
+		return nil
+	}
+	for _, node := range []ast.Decl(s) {
+		switch n := node.(type) {
+		case *ast.GenDecl:
+			for _, spec := range n.Specs {
+				if SpecIdentLit(spec) == specIdentLit {
+					return spec
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // SortImports 实现 sort.Interface. 按照 import path 进行排序.
 type SortImports []*ast.ImportSpec
 

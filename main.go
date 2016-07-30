@@ -18,32 +18,66 @@ import (
 const mode = ast.FilterFuncDuplicates |
 	ast.FilterUnassociatedComments | ast.FilterImportDuplicates
 
-func usage() {
-	fmt.Fprintln(os.Stderr,
-		`usage: godocu package [target]
-         target       the directory as an absolute base path of docs.
-                      the path for output if not set -diff.`,
-	)
+const usage = `Usage:
+
+    godocu command [arguments] source [target]
+
+The commands are:
+
+    diff    compare the source and target, all difference output
+    first   compare the source and target, the first difference output
+    code    prints a formatted string to target as Go source code
+    text    prints a formatted string to target as godoc
+
+The source are:
+
+    package import path or absolute path
+    the path to a Go source file
+
+The target are:
+
+    the directory as an absolute base path for compare or prints
+
+The arguments are:
+`
+
+func flagUsage() {
+	fmt.Fprintln(os.Stderr, usage)
 	flag.PrintDefaults()
 	os.Exit(2)
 }
 
-func flagParse() ([]string, docu.Mode, string) {
-	var gopath, lang string
-	var mode docu.Mode
-	var u, cmd, test, source, diff bool
+func flagParse() (mode docu.Mode, command, source, target, lang string) {
+	var gopath string
+	var u, cmd, test bool
 
-	flag.Usage = usage
 	flag.StringVar(&docu.GOROOT, "goroot", docu.GOROOT, "Go root directory")
 	flag.StringVar(&gopath, "gopath", os.Getenv("GOPATH"), "specifies gopath")
 	flag.StringVar(&lang, "lang", "origin", "the lang pattern for the output file, form like xx[_XX]")
 	flag.BoolVar(&u, "u", false, "show unexported symbols as well as exported")
 	flag.BoolVar(&cmd, "cmd", false, "show symbols with package docs even if package is a command")
 	flag.BoolVar(&test, "test", false, "show symbols with package docs even if package is a testing")
-	flag.BoolVar(&source, "go", false, "prints a formatted string to standard output as Go source code")
-	flag.BoolVar(&diff, "diff", false, "list different of package of target-path docs")
 
-	flag.Parse()
+	if len(os.Args) < 2 {
+		flagUsage()
+	}
+
+	flag.CommandLine.Parse(os.Args[2:])
+
+	args := flag.Args()
+	if len(args) == 0 || len(args) > 2 {
+		flagUsage()
+	}
+	command = os.Args[1]
+
+	source = args[0]
+	if len(args) == 2 {
+		target = args[1]
+	}
+
+	if gopath != os.Getenv("GOPATH") {
+		docu.GOPATHS = filepath.SplitList(gopath)
+	}
 
 	if u {
 		mode |= docu.ShowUnexported
@@ -55,50 +89,16 @@ func flagParse() ([]string, docu.Mode, string) {
 	if test {
 		mode |= docu.ShowTest
 	}
-	if source {
-		mode |= 1 << 30
-	}
-	if diff {
-		mode |= 1 << 31
-	}
 
-	paths := flag.Args()
-	if len(paths) == 0 {
-		flag.Usage()
-	}
-
-	if gopath != os.Getenv("GOPATH") {
-		docu.GOPATHS = filepath.SplitList(gopath)
-	}
-	return paths, mode, lang
+	return
 }
 
 // 多文档输出分割线
 var sp = "\n\n" + strings.Repeat("/", 80) + "\n\n"
 
 func main() {
-	var source, target, ext string
 	var err error
-	var ok bool
-
-	paths, mode, lang := flagParse()
-
-	source = paths[0]
-	if len(paths) > 1 {
-		target = paths[1]
-		fi, err := os.Stat(target)
-		if err == nil && !fi.IsDir() {
-			log.Fatal("target must be an absolute base path of docs")
-		}
-		if os.IsNotExist(err) {
-			err = os.MkdirAll(target, 0777)
-		}
-		if err != nil {
-			log.Fatal(err)
-		}
-	}
-
-	// 遍历子目录
+	mode, command, source, target, lang := flagParse()
 	sub := strings.HasSuffix(source, "...")
 	if sub {
 		source = source[:len(source)-3]
@@ -106,65 +106,38 @@ func main() {
 			source = docu.GOROOT + docu.SrcElem
 		}
 	}
-
-	godoc := docu.Godoc
-	ext = ".text"
-	if 1<<30&mode != 0 {
-		godoc = docu.DocGo
-		ext = ".go"
-		mode -= 1 << 30
+	if target == "" && (command == "first" || command == "diff") {
+		command = "help"
 	}
-	diff := 1<<31&mode != 0
-	if diff {
-		mode -= 1 << 31
-		diffMode(mode, sub, source, target)
-		return
-	}
-
-	fs := docu.Target(target)
 	ch := make(chan interface{})
 	go walkPath(ch, sub, source)
-	out := false
-	var du *docu.Docu
-	var output *os.File
-	for i := <-ch; i != nil; i = <-ch {
-		if err, ok = i.(error); !ok {
-			du = docu.New(mode)
-			source = i.(string)
-			paths, err = du.Parse(source, nil)
-		}
-		if err != nil {
-			break
-		}
-		for _, key := range paths {
-			output, err = fs.Create(key, lang, ext)
-			if err != nil {
-				break
+	switch command {
+	case "first", "diff":
+		// 如果目录结构不同, 不进行文档对比
+		if sub {
+			d1 := diffTree(mode, source, target)
+			if d1 {
+				fmt.Fprintf(os.Stdout, sp)
 			}
-			if target == "" {
-				if out {
-					io.WriteString(output, sp)
-				}
-				out = true
-			}
-			err = godoc(output, key, du.FileSet, du.MergePackageFiles(key))
-			if target != "" {
-				output.Close()
-			}
-			if err != nil {
+			d2 := diffTree(mode, target, source)
+			if d1 || d2 {
 				break
 			}
 		}
-		if err != nil {
-			break
-		}
-		ch <- nil
+		err = diffMode(command, mode, ch, source, target)
+	case "code", "text":
+		err = showMode(command, mode, ch, target, lang)
+	default:
+		<-ch
+		ch <- false
+		<-ch
+		close(ch)
+		flagUsage()
 	}
 	close(ch)
 	if err != nil {
 		log.Fatal(err)
 	}
-
 }
 
 // walkPath 通道类型约定:
@@ -194,28 +167,67 @@ func walkPath(ch chan interface{}, sub bool, source string) {
 	ch <- nil
 }
 
-func diffMode(mode docu.Mode, sub bool, source, target string) {
-	var err error
+func showMode(command string, mode docu.Mode, ch chan interface{}, target, lang string) (err error) {
 	var ok bool
+	var source string
+	var paths []string
+	var du *docu.Docu
+	var output *os.File
+
+	fs := docu.Target(target)
+
+	docgo := docu.DocGo
+	if command == "text" {
+		docgo = docu.Godoc
+	}
+
+	out := false
+	for i := <-ch; i != nil; i = <-ch {
+		if err, ok = i.(error); !ok {
+			du = docu.New(mode)
+			source = i.(string)
+			paths, err = du.Parse(source, nil)
+		}
+		if err != nil {
+			break
+		}
+		for _, key := range paths {
+			output, err = fs.Create(key, lang, ".go")
+			if err != nil {
+				break
+			}
+			if target == "" {
+				if out {
+					io.WriteString(output, sp)
+				}
+				out = true
+			}
+			err = docgo(output, key, du.FileSet, du.MergePackageFiles(key))
+			if target != "" {
+				output.Close()
+			}
+			if err != nil {
+				break
+			}
+		}
+		if err != nil {
+			break
+		}
+		ch <- nil
+	}
+	return
+}
+
+func diffMode(command string, mode docu.Mode, ch chan interface{}, source, target string) (err error) {
+	var ok, diff bool
 	var paths, tpaths []string
 	var du, tu *docu.Docu
 
 	output := os.Stdout
-	// 如果目录结构不同, 不进行文档对比
-	if sub {
-		d1 := diffTree(mode, source, target)
-		if d1 {
-			fmt.Fprintf(output, sp)
-		}
-		d2 := diffTree(mode, target, source)
-		if d1 || d2 {
-			return
-		}
+	fileDiff := docu.FirstDiff
+	if command == "diff" {
+		fileDiff = docu.Diff
 	}
-
-	ch := make(chan interface{})
-	go walkPath(ch, sub, source)
-
 	for i := <-ch; i != nil; i = <-ch {
 		if err, ok = i.(error); !ok {
 			du = docu.New(mode)
@@ -236,21 +248,21 @@ func diffMode(mode docu.Mode, sub bool, source, target string) {
 			break
 		}
 
-		ok, err = docu.SameText(output, "packages "+strings.Join(paths, ","),
+		diff, err = docu.TextDiff(output, "packages "+strings.Join(paths, ","),
 			"packages "+strings.Join(tpaths, ","))
 		if err != nil {
 			break
 		}
 
-		if !ok {
+		if diff {
 			ch <- nil
 			io.WriteString(output, sp)
 			continue
 		}
 
 		for _, key := range paths {
-			ok, err = docu.Same(output, du.MergePackageFiles(key), tu.MergePackageFiles(key))
-			if !ok && err == nil {
+			diff, err = fileDiff(output, du.MergePackageFiles(key), tu.MergePackageFiles(key))
+			if diff && err == nil {
 				_, err = io.WriteString(output, "FROM: package ")
 				if err == nil {
 					_, err = io.WriteString(output, key)
@@ -269,10 +281,7 @@ func diffMode(mode docu.Mode, sub bool, source, target string) {
 		}
 		ch <- nil
 	}
-	close(ch)
-	if err != nil {
-		log.Fatal(err)
-	}
+	return
 }
 
 // diffTree 比较目录结构是否相同

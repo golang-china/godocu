@@ -7,34 +7,34 @@ import (
 	"strings"
 )
 
-func SameForm(w io.Writer, source, target string) (same bool, err error) {
-	return sameForm(w, source, target)
-}
-
-func SameText(w io.Writer, source, target string) (same bool, err error) {
-	return sameText(w, source, target)
-}
-
-func sameForm(w io.Writer, source, target string) (same bool, err error) {
-	const prefix = "    "
-	if same = source == target; same {
-		return
-	}
-	if lineString(source) == lineString(target) {
-		err = fprint(w, "FORM:\n", LineWrapper(source, prefix, 80), "\nDIFF:\n", LineWrapper(target, prefix, 80), nl)
-	} else {
-		err = fprint(w, "TEXT:\n", LineWrapper(source, prefix, 80), "\nDIFF:\n", LineWrapper(target, prefix, 80), nl)
+// FormDiff 对比输出 source, target 的排版或值差异, 返回是否有差异及发生的错误.
+func FormDiff(w io.Writer, source, target string) (diff bool, err error) {
+	if diff = source != target; diff {
+		err = diffOut(lineString(source) == lineString(target), w, source, target)
 	}
 	return
 }
 
-func sameText(w io.Writer, source, target string) (same bool, err error) {
-	const prefix = "    "
-	if same = source == target; same {
-		return
+// TextDiff 对比输出 source, target 的值差异, 返回是否有差异及发生的错误.
+func TextDiff(w io.Writer, source, target string) (diff bool, err error) {
+	if diff = source != target; diff {
+		err = diffOut(false, w, source, target)
 	}
-	err = fprint(w, "TEXT:\n", LineWrapper(source, prefix, 80), "\nDIFF:\n", LineWrapper(target, prefix, 80), nl)
 	return
+}
+
+func diffOut(form bool, w io.Writer, source, target string) error {
+	const prefix = "    "
+	if source == "" {
+		source = "none"
+	}
+	if target == "" {
+		target = "none"
+	}
+	if form {
+		return fprint(w, "FORM:\n", LineWrapper(source, prefix, 80), "\nDIFF:\n", LineWrapper(target, prefix, 80), nl)
+	}
+	return fprint(w, "TEXT:\n", LineWrapper(source, prefix, 80), "\nDIFF:\n", LineWrapper(target, prefix, 80), nl)
 }
 
 // lineString 对 str 进行单行合并, 剔除空白行
@@ -47,74 +47,256 @@ func lineString(str string) string {
 	return str
 }
 
-// Same 返回两个已排序 ast.File 是否相同, 并输出首个差异.
-func Same(w io.Writer, source, target *ast.File) (same bool, err error) {
+// FirstDiff 对比输出两个已排序 ast.File 首个差异, 返回是否有差异及发生的错误.
+func FirstDiff(w io.Writer, source, target *ast.File) (diff bool, err error) {
 	const nl = "\n\n"
-	same, err = sameText(w, "package "+source.Name.String(), "package "+target.Name.String())
-	if !same || err != nil {
+	diff, err = TextDiff(w, "package "+source.Name.String(), "package "+target.Name.String())
+	if diff || err != nil {
 		return
 	}
 
-	same, err = sameForm(w, source.Doc.Text(), target.Doc.Text())
-	if !same || err != nil {
+	diff, err = FormDiff(w, source.Doc.Text(), target.Doc.Text())
+	if diff || err != nil {
 		return
 	}
 
-	same, err = sameForm(w, ImportsString(source.Imports), ImportsString(target.Imports))
-	if !same || err != nil {
+	diff, err = FormDiff(w, ImportsString(source.Imports), ImportsString(target.Imports))
+	if diff || err != nil {
 		return
 	}
 
-	sd, td := source.Decls, target.Decls
-	count, total := len(sd), len(td)
-	same, err = sameText(w, "Decls length "+strconv.Itoa(count), "Decls length "+strconv.Itoa(total))
-	if !same || err != nil {
+	return firstDecls(w, source.Decls, target.Decls)
+}
+
+func firstDecls(w io.Writer, source, target []ast.Decl) (diff bool, err error) {
+	sd, so := declsOf(ConstNum, source, 0)
+	dd, do := declsOf(ConstNum, target, 0)
+	diff, err = diffGenDecls(w, "Const ", sd, dd)
+	if diff || err != nil {
 		return
 	}
 
-	for i := 0; i < count; i++ {
-		num := NodeNumber(sd[i])
-		same, err = sameText(w, numNames[num], numNames[NodeNumber(td[i])])
-		if !same || err != nil {
-			return
-		}
+	sd, so = declsOf(VarNum, source, so)
+	dd, do = declsOf(VarNum, target, do)
+	diff, err = diffGenDecls(w, "Var ", sd, dd)
+	if diff || err != nil {
+		return
+	}
 
-		if num == ImportNum {
-			continue
-		}
+	sd, so = declsOf(TypeNum, source, so)
+	dd, do = declsOf(TypeNum, target, do)
+	diff, err = diffGenDecls(w, "Type ", sd, dd)
+	if diff || err != nil {
+		return
+	}
 
-		if num == FuncNum || num == MethodNum {
-			a := sd[i].(*ast.FuncDecl)
-			b := td[i].(*ast.FuncDecl)
-			same, err = sameText(w, FuncLit(a), FuncLit(b))
-			if same && err == nil {
-				same, err = sameForm(w, a.Doc.Text(), b.Doc.Text())
+	sd, so = declsOf(FuncNum, source, so)
+	dd, do = declsOf(FuncNum, target, do)
+	diff, err = diffFuncDecls(w, "Func ", sd, dd)
+	if diff || err != nil {
+		return
+	}
+
+	sd, so = declsOf(MethodNum, source, so)
+	dd, do = declsOf(MethodNum, target, do)
+	return diffFuncDecls(w, "Method ", sd, dd)
+}
+
+// Diff 对比输出两个已排序 ast.File 差异, 返回是否有差异及发生的错误.
+// 如果包名称不同, 停止继续对比.
+func Diff(w io.Writer, source, target *ast.File) (diff bool, err error) {
+	const nl = "\n\n"
+	var out bool
+	diff, err = TextDiff(w, "package "+source.Name.String(), "package "+target.Name.String())
+	if diff || err != nil {
+		return
+	}
+	out, err = FormDiff(w, source.Doc.Text(), target.Doc.Text())
+	if diff = diff || out; err != nil {
+		return
+	}
+
+	out, err = FormDiff(w, ImportsString(source.Imports), ImportsString(target.Imports))
+	if diff = diff || out; err != nil {
+		return
+	}
+
+	out, err = diffDecls(w, source.Decls, target.Decls)
+	diff = diff || out
+	return
+}
+
+// diffDecls 对比输出两个已排序 []ast.Decl 差异, 返回是否有差异及发生的错误.
+// diffDecls 不比较 import 声明
+func diffDecls(w io.Writer, source, target []ast.Decl) (diff bool, err error) {
+	var out bool
+	sd, so := declsOf(ConstNum, source, 0)
+	dd, do := declsOf(ConstNum, target, 0)
+	out, err = diffGenDecls(w, "Const ", sd, dd)
+	if diff = diff || out; err != nil {
+		return
+	}
+
+	sd, so = declsOf(VarNum, source, so)
+	dd, do = declsOf(VarNum, target, do)
+	out, err = diffGenDecls(w, "Var ", sd, dd)
+	if diff = diff || out; err != nil {
+		return
+	}
+
+	sd, so = declsOf(TypeNum, source, so)
+	dd, do = declsOf(TypeNum, target, do)
+	out, err = diffGenDecls(w, "Type ", sd, dd)
+	if diff = diff || out; err != nil {
+		return
+	}
+
+	sd, so = declsOf(FuncNum, source, so)
+	dd, do = declsOf(FuncNum, target, do)
+	out, err = diffFuncDecls(w, "Func ", sd, dd)
+	if diff = diff || out; err != nil {
+		return
+	}
+
+	sd, so = declsOf(MethodNum, source, so)
+	dd, do = declsOf(MethodNum, target, do)
+	out, err = diffFuncDecls(w, "Method ", sd, dd)
+	diff = diff || out
+	return
+}
+
+// 需要优化 SortDecl 搜索效率
+
+func diffGenDecls(w io.Writer, prefix string, source, target []ast.Decl) (diff bool, err error) {
+	ss := SortDecl(source)
+	dd := SortDecl(target)
+	if ss.Len() == 0 && dd.Len() == 0 {
+		return
+	}
+	if ss.Len() == 0 || dd.Len() == 0 {
+		return TextDiff(w, prefix+strconv.Itoa(ss.Len()), prefix+strconv.Itoa(dd.Len()))
+	}
+	var lit string
+
+	for _, node := range ss {
+		decl := node.(*ast.GenDecl)
+		for _, spec := range decl.Specs {
+			lit = SpecIdentLit(spec)
+			targ := dd.SearchSpec(lit)
+			if targ == nil {
+				diff, err = true, diffOut(false, w, prefix+lit, "")
+				if err != nil {
+					return
+				}
+				continue
 			}
-			if !same || err != nil {
+			// 类型
+			slit, dlit := SpecTypeLit(spec), SpecTypeLit(targ)
+
+			if slit != dlit {
+				diff, err = true, diffOut(false, w, prefix+lit+" "+slit, prefix+lit+" "+dlit)
+				if err != nil {
+					return
+				}
+				continue
+			}
+			// 文档
+			slit, dlit = SpecDoc(spec), SpecDoc(targ)
+
+			if slit != dlit {
+				diff, err = true, diffOut(false, w, prefix+lit+" doc:\n\n"+slit, prefix+lit+" doc:\n\n"+dlit)
+			}
+			if err != nil {
+				return
+			}
+		}
+	}
+	// 第二次只对比没有的
+	ss, dd = dd, ss
+	for _, node := range ss {
+		decl := node.(*ast.GenDecl)
+		for _, spec := range decl.Specs {
+			lit = SpecIdentLit(spec)
+			targ := dd.SearchSpec(lit)
+			if targ == nil {
+				diff, err = true, diffOut(false, w, "", prefix+lit)
+				if err != nil {
+					return
+				}
+			}
+		}
+	}
+	return
+}
+
+func diffFuncDecls(w io.Writer, prefix string, source, target []ast.Decl) (diff bool, err error) {
+	ss := SortDecl(source)
+	dd := SortDecl(target)
+	if ss.Len() == 0 && dd.Len() == 0 {
+		return
+	}
+	if ss.Len() == 0 || dd.Len() == 0 {
+		return TextDiff(w, prefix+strconv.Itoa(ss.Len()), prefix+strconv.Itoa(dd.Len()))
+	}
+	var lit string
+	for _, node := range ss {
+		spec := node.(*ast.FuncDecl)
+		lit = FuncIdentLit(spec)
+		targ := dd.Search(lit)
+		if targ == nil {
+			diff, err = true, diffOut(false, w, FuncLit(spec), "")
+			if err != nil {
 				return
 			}
 			continue
 		}
-		a := sd[i].(*ast.GenDecl)
-		b := td[i].(*ast.GenDecl)
-		if a == nil || b == nil {
+		slit, dlit := FuncLit(spec), FuncLit(targ.(*ast.FuncDecl))
+		if slit != dlit {
+			diff, err = true, diffOut(false, w, slit, dlit)
+			if err != nil {
+				return
+			}
 			continue
 		}
-		same, err = sameText(w, "Specs length "+strconv.Itoa(len(a.Specs)), "Specs length "+strconv.Itoa(len(b.Specs)))
-		if same && err == nil {
-			same, err = sameForm(w, a.Doc.Text(), b.Doc.Text())
+		sdoc, ddoc := spec.Doc.Text(), targ.(*ast.FuncDecl).Doc.Text()
+		if sdoc != ddoc {
+			diff, err = true, diffOut(false, w, slit+"\n\n"+sdoc, dlit+"\n\n"+ddoc)
+			if err != nil {
+				return
+			}
 		}
-		if !same || err != nil {
-			return
-		}
-
-		c := len(a.Specs)
-		for i := 0; i < c; i++ {
-			same, err = sameText(w, SpecIdentLit(a.Specs[i]), SpecIdentLit(b.Specs[i]))
-			if !same || err != nil {
+	}
+	ss, dd = dd, ss
+	for _, node := range ss {
+		spec := node.(*ast.FuncDecl)
+		lit = FuncIdentLit(spec)
+		targ := dd.Search(lit)
+		if targ == nil {
+			diff, err = true, diffOut(false, w, "", FuncLit(spec))
+			if err != nil {
 				return
 			}
 		}
 	}
 	return
+}
+
+func declsOf(num int, decls []ast.Decl, offset int) ([]ast.Decl, int) {
+	first, last := -1, len(decls)
+	if offset >= 0 && offset < len(decls) {
+		for i, node := range decls[offset:] {
+			if first == -1 {
+				if NodeNumber(node) == num {
+					first = offset + i
+				}
+			} else if NodeNumber(node) > num {
+				last = offset + i
+				break
+			}
+		}
+	}
+	if first == -1 {
+		return nil, offset
+	}
+	return decls[first:last], last
 }

@@ -24,21 +24,36 @@ go get github.com/golang-china/godocu
 # Usage
 
 ```
-usage: godocu package [target]
-         target       the directory as an absolute base path of docs.
-                      the path for output if not set -diff.
+Usage:
+
+    godocu command [arguments] source [target]
+
+The commands are:
+
+    diff    compare the source and target, all difference output
+    first   compare the source and target, the first difference output
+    code    prints a formatted string to target as Go source code
+    text    prints a formatted string to target as godoc
+
+The source are:
+
+    package import path or absolute path
+    the path to a Go source file
+
+The target are:
+
+    the directory as an absolute base path for compare or prints
+
+The arguments are:
+
   -cmd
       show symbols with package docs even if package is a command
-  -diff
-      list different of package of target-path docs
-  -go
-      prints a formatted string to standard output as Go source code
   -gopath string
-      specifies gopath (default $GOPATH)
+      specifies gopath (default "/Users/achun/Workspace/gowork")
   -goroot string
-      Go root directory (default $GOROOT)
+      Go root directory (default "/usr/local/Cellar/go/1.6/libexec")
   -lang string
-      the lang pattern for the output file (default "origin")
+      the lang pattern for the output file, form like xx[_XX] (default "origin")
   -test
       show symbols with package docs even if package is a testing
   -u  show unexported symbols as well as exported
@@ -46,66 +61,38 @@ usage: godocu package [target]
 
 # Diff
 
-可选参数 `-diff` 可比较两个包, 输出首个差异信息.
+命令 `first` 比较两个包, 输出首个差异信息, `diff` 输出全部差异信息.
 
-比较 reflect 在两个版本中的不同
+比较 reflect 在当前版本 1.6.2 和老版本的差异
 
 ```shell
-$ godocu -goroot=/usr/local/Cellar/go/1.5.2/libexec -diff reflect /usr/local/Cellar/go/1.6.2/libexec/src
+$ godocu first reflect /usr/local/Cellar/go/1.5.2/libexec/src
 ```
 
 输出
 
 ```
 TEXT:
-    Decls length 112
+    func DeepEqual(x, y interface{}) bool
 DIFF:
-    Decls length 113
+    func DeepEqual(a1, a2 interface{}) bool
 FROM: package reflect
-
-////////////////////////////////////////////////////////////////////////////////
 ```
 
 意思是
 
 ```
 [内容]:
-    顶级声明长度 112
+    func DeepEqual(x, y interface{}) bool
 [不同]:
-    顶级声明长度 113
+    func DeepEqual(a1, a2 interface{}) bool
 来自: package reflect
-```
-
-
-```shell
-$ godocu -goroot=/usr/local/Cellar/go/1.5.2/libexec -diff go/types /usr/local/Cellar/go/1.6.2/libexec/src
 ```
 
 输出
 
 ```
 TEXT:
-    Package types declares the data types and implements
-    the algorithms for type-checking of Go packages. Use
-    Config.Check to invoke the type checker for a package.
-    Alternatively, create a new type checked with NewChecker
-    and invoke it incrementally by calling Checker.Files.
-
-    Type-checking consists of several interdependent phases:
-
-    Name resolution maps each identifier (ast.Ident) in the program to the
-    language object (Object) it denotes.
-    Use Info.{Defs,Uses,Implicits} for the results of name resolution.
-
-    Constant folding computes the exact constant value (constant.Value)
-    for every expression (ast.Expr) that is a compile-time constant.
-    Use Info.Types[expr].Value for the results of constant folding.
-
-    Type inference computes the type (Type) of every expression (ast.Expr)
-    and checks for compliance with the language specification.
-    Use Info.Types[expr].Type for the results of type inference.
-
-DIFF:
     Package types declares the data types and implements
     the algorithms for type-checking of Go packages. Use
     Config.Check to invoke the type checker for a package.
@@ -128,12 +115,117 @@ DIFF:
 
     For a tutorial, see https://golang.org/s/types-tutorial.
 
+DIFF:
+    Package types declares the data types and implements
+    the algorithms for type-checking of Go packages. Use
+    Config.Check to invoke the type checker for a package.
+    Alternatively, create a new type checked with NewChecker
+    and invoke it incrementally by calling Checker.Files.
+
+    Type-checking consists of several interdependent phases:
+
+    Name resolution maps each identifier (ast.Ident) in the program to the
+    language object (Object) it denotes.
+    Use Info.{Defs,Uses,Implicits} for the results of name resolution.
+
+    Constant folding computes the exact constant value (constant.Value)
+    for every expression (ast.Expr) that is a compile-time constant.
+    Use Info.Types[expr].Value for the results of constant folding.
+
+    Type inference computes the type (Type) of every expression (ast.Expr)
+    and checks for compliance with the language specification.
+    Use Info.Types[expr].Type for the results of type inference.
+
+TEXT:
+    import (
+        "bytes"
+        "container/heap"
+        "fmt"
+        "go/ast"
+        "go/constant"
+        "go/parser"
+        "go/token"
+        "io"
+        "math"
+        "sort"
+        "strconv"
+        "strings"
+        "sync"
+        "testing"
+        "unicode"
+    )
+
+DIFF:
+    import (
+        "bytes"
+        "container/heap"
+        "fmt"
+        "go/ast"
+        "go/constant"
+        "go/parser"
+        "go/token"
+        "io"
+        "math"
+        "path"
+        "sort"
+        "strconv"
+        "strings"
+        "testing"
+        "unicode"
+    )
+
+TEXT:
+    Type ImportMode
+DIFF:
+    none
+TEXT:
+    Type ImporterFrom
+DIFF:
+    none
+TEXT:
+    Type Struct struct{fields []*Var; tags []string; offsets []int64; offsetsOnce sync.Once}
+DIFF:
+    Type Struct struct{fields []*Var; tags []string; offsets []int64}
+TEXT:
+    func (*Config) Check(path string, fset *token.FileSet, files []*ast.File, info *Info)
+    (*Package, error)
+
+    Check type-checks a package and returns the resulting package object and
+    the first error if any. Additionally, if info != nil, Check populates each
+    of the non-nil maps in the Info struct.
+
+    The package is marked as complete if no errors occurred, otherwise it is
+    incomplete. See Config.Error for controlling behavior in the presence of
+    errors.
+
+    The package is specified by a list of *ast.Files and corresponding
+    file set, and the package path the package is identified with.
+    The clean path must not be empty or dot (".").
+
+DIFF:
+    func (*Config) Check(path string, fset *token.FileSet, files []*ast.File, info *Info)
+    (*Package, error)
+
+    Check type-checks a package and returns the resulting package object,
+    the first error if any, and if info != nil, additional type information.
+    The package is marked as complete if no errors occurred, otherwise it is
+    incomplete. See Config.Error for controlling behavior in the presence of
+    errors.
+
+    The package is specified by a list of *ast.Files and corresponding
+    file set, and the package path the package is identified with.
+    The clean path must not be empty or dot (".").
+
+TEXT:
+    func (*Package) SetName(name string)
+DIFF:
+    none
 FROM: package go/types
 ```
 
 
-go 1.6.2 的注释多了一行 `For a tutorial, see https://golang.org/s/types-tutorial.`.
-
+go 1.6.2 的 Doc 注释多了一行 `For a tutorial, see https://golang.org/s/types-tutorial.`.
+其他还有一些变化.
 
 如果看到的不是 `TEXT:` 而是 `FORM:` 表示折叠为一行后值相同, 即格式发生变化,
 
