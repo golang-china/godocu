@@ -60,7 +60,7 @@ func flagParse() (mode docu.Mode, command, source, target, lang string) {
 	flag.BoolVar(&cmd, "cmd", false, "show symbols with package docs even if package is a command")
 	flag.BoolVar(&test, "test", false, "show symbols with package docs even if package is a testing")
 
-	if len(os.Args) < 2 {
+	if len(os.Args) < 3 {
 		flagUsage()
 	}
 
@@ -120,11 +120,8 @@ func main() {
 	case "first", "diff":
 		// 如果目录结构不同, 不进行文档对比
 		if sub {
-			d1 := diffTree(mode, source, target)
-			if d1 {
-				fmt.Fprintf(os.Stdout, sp)
-			}
-			d2 := diffTree(mode, target, source)
+			d1 := diffTree(mode, false, source, target)
+			d2 := diffTree(mode, true, target, source)
 			if d1 || d2 {
 				break
 			}
@@ -293,7 +290,7 @@ func diffMode(command string, mode docu.Mode, ch chan interface{}, source, targe
 }
 
 // diffTree 比较目录结构是否相同
-func diffTree(mode docu.Mode, source, target string) (diff bool) {
+func diffTree(mode docu.Mode, swap bool, source, target string) (diff bool) {
 	var ok bool
 	var err error
 	var fi os.FileInfo
@@ -302,6 +299,10 @@ func diffTree(mode docu.Mode, source, target string) (diff bool) {
 	pos := len(source)
 	if strings.LastIndexAny(source, `\/`)+1 != pos {
 		pos++
+	}
+	prefix := ""
+	if !swap {
+		prefix = fmt.Sprintf("source: %s\ntarget: %s\n\nsource target import_path\n", source, target)
 	}
 	output := os.Stdout
 	for i := <-ch; i != nil; i = <-ch {
@@ -314,11 +315,19 @@ func diffTree(mode docu.Mode, source, target string) (diff bool) {
 		}
 		fi, err = os.Stat(filepath.Join(target, source))
 		if os.IsNotExist(err) {
-			diff = true
-			_, err = fmt.Fprintf(output, "TEXT:\n    path %s\nDIFF:\n    none\n\n", source)
-		} else if err == nil && !fi.IsDir() {
-			diff = true
-			_, err = fmt.Fprintf(output, "TEXT:\n    path %s\nDIFF:\n    is file\n\n", source)
+			if swap {
+				_, err = fmt.Fprintln(output, "  none  path ", source)
+			} else {
+				_, err = fmt.Fprintln(output, prefix+"  path  none ", source)
+			}
+			diff, err, prefix = true, nil, ""
+		} else if err == nil && !fi.IsDir() { // 虽然不大能
+			if swap {
+				_, err = fmt.Fprintln(output, "  file  path ", source)
+			} else {
+				_, err = fmt.Fprintln(output, prefix+"  path  file ", source)
+			}
+			diff, prefix = true, ""
 		}
 		if err != nil {
 			break

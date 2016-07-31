@@ -15,6 +15,7 @@ func FormDiff(w io.Writer, source, target string) (diff bool, err error) {
 	return
 }
 
+// DiffFormOnly 返回两个字符串是否只是格式不同.
 func DiffFormOnly(source, target string) bool {
 	return source != target && lineString(source) == lineString(target)
 }

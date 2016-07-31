@@ -2,7 +2,6 @@ package docu
 
 import (
 	"go/ast"
-	"go/doc"
 	"os"
 	"path/filepath"
 	"strings"
@@ -165,11 +164,13 @@ func IsPkgDir(fi os.FileInfo) bool {
 func License(file *ast.File) (lic string) {
 	for _, comm := range file.Comments {
 		lic = comm.Text()
-		if doc.Synopsis(lic) == "" &&
-			"copyright" == strings.ToLower(strings.SplitN(lic, " ", 2)[0]) {
-			break
+		pos := strings.IndexByte(lic, ' ')
+		if pos == -1 {
+			continue
 		}
-		lic = ""
+		if "copyright" == strings.ToLower(lic[:pos]) {
+			return lic
+		}
 	}
-	return
+	return ""
 }
