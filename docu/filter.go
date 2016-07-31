@@ -165,10 +165,7 @@ func License(file *ast.File) (lic string) {
 	for _, comm := range file.Comments {
 		lic = comm.Text()
 		pos := strings.IndexByte(lic, ' ')
-		if pos == -1 {
-			continue
-		}
-		if "copyright" == strings.ToLower(lic[:pos]) {
+		if pos != -1 && "copyright" == strings.ToLower(lic[:pos]) {
 			return lic
 		}
 	}

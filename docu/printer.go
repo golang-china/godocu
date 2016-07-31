@@ -39,13 +39,54 @@ func ToSource(output io.Writer, text string) error {
 
 // FormatComments 调用 LineWrapper 换行格式化注释 text 输出到 output.
 func FormatComments(output io.Writer, text, prefix string, limit int) (err error) {
-	var buf bytes.Buffer
 	if text != "" {
-		// 利用 ToText 的 preIndent 功能
-		doc.ToText(&buf, text, "", "    ", 1<<32)
-		_, err = io.WriteString(output, LineWrapper(buf.String(), prefix, limit))
+		var buf bytes.Buffer
+		// 利用 ToText 的 preIndent 功能先缩成一行
+		if !IsWrapped(text, limit) {
+			doc.ToText(&buf, text, "", "    ", 1<<32)
+			text = buf.String()
+		}
+		_, err = io.WriteString(output, LineWrapper(text, prefix, limit))
 	}
 	return
+}
+
+// UrlPos 识别 text 第一个网址出现的位置.
+func UrlPos(text string) (pos int) {
+	pos = strings.Index(text, "://")
+	if pos == -1 {
+		return
+	}
+	pos--
+	for pos != 0 {
+		if (text[pos] >= 'a' && text[pos] <= 'z') || text[pos] == '-' {
+			pos--
+		} else {
+			pos++
+			break
+		}
+	}
+	return
+}
+
+// IsWrapped 检查 text 每一行的长度都小于等于 limit.
+func IsWrapped(text string, limit int) bool {
+	n, w := 0, 0
+	// 检查是否已经排好版
+	for n != -1 {
+		text = text[w:]
+		n = strings.IndexByte(text, '\n')
+		if n == -1 {
+			w = len(text)
+		} else {
+			w = n
+		}
+		if w >= limit {
+			return false
+		}
+		w = n + 1
+	}
+	return true
 }
 
 // KeepPunct 是 LineWrapper 进行换行时行尾要保留标点符号
@@ -57,12 +98,22 @@ var KeepPunct = `,.:;?，．：；？。`
 //	prefix 为每行前缀字符串.
 //	limit  的长度不包括 prefix 的长度.
 //	位于换行处的标点符被保留.
+//	移除 GoDocu 分割线
 func LineWrapper(text string, prefix string, limit int) (wrap string) {
 	const nl = "\n"
 	var lf, r, next rune
 	var isIndent bool
 	var last, word string // 最后一行前部和尾部单词
 	n, w := 0, 0
+
+	n = strings.Index(text, "___GoDocu_Dividing_line___")
+
+	if n > 1 && (text[n-1] == '\n' || text[n-1] == '\r') &&
+		(text[n+26] == '\n' || text[n+26] == '\r') {
+		return LineWrapper(text[:n-1], prefix, limit) + "\n" +
+			LineWrapper(text[n+27:], prefix, limit)
+	}
+
 	for _, r = range text {
 		// 预读取一个
 		r, next = next, r
@@ -71,13 +122,17 @@ func LineWrapper(text string, prefix string, limit int) (wrap string) {
 		}
 		switch r {
 		case '\r':
-			wrap += strings.TrimRight(prefix+last+word, " ") + nl
+			if wrap != "" || last != "" || word != "" {
+				wrap += strings.TrimRight(prefix+last+word, " ") + nl
+			}
 			w, last, word = 0, "", ""
 			isIndent, lf = false, r
 			continue
 		case '\n':
 			if lf != '\r' {
-				wrap += strings.TrimRight(prefix+last+word, " ") + nl
+				if wrap != "" || last != "" || word != "" {
+					wrap += strings.TrimRight(prefix+last+word, " ") + nl
+				}
 				w, last, word = 0, "", ""
 			}
 			lf, isIndent = r, false
@@ -136,6 +191,22 @@ func LineWrapper(text string, prefix string, limit int) (wrap string) {
 
 		if keep || w < limit {
 			last, word = last+word+string(r), ""
+			// 识别网址
+			if w > limit {
+				pos := UrlPos(last)
+				if pos == 0 {
+					wrap += strings.TrimRight(prefix+last, " ") + nl
+					w = 0
+				} else if pos != -1 {
+					wrap += strings.TrimRight(prefix+last[:pos], " ") + nl
+					last = last[pos:]
+					w = len(last)
+					if w > limit {
+						wrap += strings.TrimRight(prefix+last, " ") + nl
+						w, last = 0, ""
+					}
+				}
+			}
 		} else if w == limit || r == ' ' || r == '　' {
 			wrap += strings.TrimRight(prefix+last+word+string(r), " ") + nl
 			w, last, word = 0, "", ""
@@ -148,7 +219,11 @@ func LineWrapper(text string, prefix string, limit int) (wrap string) {
 		wrap += prefix + last + word
 	}
 	if next != 0 {
-		wrap += string(next)
+		if wrap == "" {
+			wrap = prefix + string(next)
+		} else {
+			wrap += string(next)
+		}
 	}
 	return
 }
@@ -275,14 +350,14 @@ func Godoc(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 // DocGo 以 go source 风格向 output 输出已排序的 ast.File.
 func DocGo(output io.Writer, paths string, fset *token.FileSet, file *ast.File) (err error) {
 	var text string
-	text = License(file)
-	if text != "" {
+	if text = License(file); text != "" {
 		if err = ToSource(output, text); err == nil {
 			err = fprint(output, nl)
 		}
 	}
-
-	err = fprint(output, "// +build ingore\n\n")
+	if err == nil {
+		err = fprint(output, "// +build ingore\n\n")
+	}
 
 	if err == nil && file.Doc != nil {
 		err = ToSource(output, file.Doc.Text())
