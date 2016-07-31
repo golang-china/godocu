@@ -34,7 +34,7 @@ The commands are:
     diff    compare the source and target, all difference output
     first   compare the source and target, the first difference output
     code    prints a formatted string to target as Go source code
-    text    prints a formatted string to target as godoc
+    plain   prints plain text documentation to target as godoc
     merge   merge source doc to target
 
 The source are:
@@ -64,6 +64,8 @@ The arguments are:
 # Diff
 
 命令 `first` 比较两个包, 输出首个差异信息, `diff` 输出全部差异信息.
+
+要求由 source,target 计算出的绝对路径必须包含 "/src/".
 
 比较 reflect 在当前版本 1.6.2 和老版本的差异
 
@@ -237,12 +239,49 @@ go 1.6.2 的 Doc 注释多了一行 `For a tutorial, see https://golang.org/s/ty
 $ godocu code go...
 ```
 
-遍历比较
+遍历比较 "cmd" 以及子目录
 
 ```shell
-$ godocu diff -goroot=/usr/local/Cellar/go/1.5.2/libexec go... /usr/local/Cellar/go/1.6/libexec/src/
+$ godocu diff cmd... /usr/local/Cellar/go/1.5.2/libexec/src/
 ```
 
-如果目录结构不同, 只输出结构不同的, 不进行文档对比.
+输出:
+
+因目录结构不同, 只输出不同的目录, 不进行文档对比.
+
+```
+source: /usr/local/Cellar/go/1.6.2/libexec/src/cmd
+target: /usr/local/Cellar/go/1.5.2/libexec/src/
+
+source target import_path
+  path  none  cmd/compile/internal/mips64
+  path  none  cmd/internal/obj/mips
+  path  none  cmd/internal/unvendor
+  path  none  cmd/internal/unvendor/golang.org
+  path  none  cmd/internal/unvendor/golang.org/x
+  path  none  cmd/internal/unvendor/golang.org/x/arch
+  path  none  cmd/internal/unvendor/golang.org/x/arch/arm
+  path  none  cmd/internal/unvendor/golang.org/x/arch/arm/armasm
+  path  none  cmd/internal/unvendor/golang.org/x/arch/x86
+  path  none  cmd/internal/unvendor/golang.org/x/arch/x86/x86asm
+  path  none  cmd/link/internal/mips64
+  path  none  cmd/vet/internal
+  path  none  cmd/vet/internal/whitelist
+  none  path  cmd/internal/rsc.io
+  none  path  cmd/internal/rsc.io/arm
+  none  path  cmd/internal/rsc.io/arm/armasm
+  none  path  cmd/internal/rsc.io/x86
+  none  path  cmd/internal/rsc.io/x86/x86asm
+  none  path  cmd/vet/whitelist
+```
+
+# Merge
+
+merge 命令对两个相同导入路径的包文档进行合并. 细节:
+
+ - 只有 source, target 中相同的顶级声明文档会被合并.
+ - source 的文档在 target 顶部
+ - 如果 target 没有 import, 添加 source 的 import
+
 
 [docu]: https://godoc.org/github.com/golang-china/godocu/docu

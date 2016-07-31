@@ -107,13 +107,12 @@ func LineWrapper(text string, prefix string, limit int) (wrap string) {
 	n, w := 0, 0
 
 	n = strings.Index(text, "___GoDocu_Dividing_line___")
-
 	if n > 1 && (text[n-1] == '\n' || text[n-1] == '\r') &&
 		(text[n+26] == '\n' || text[n+26] == '\r') {
-		return LineWrapper(text[:n-1], prefix, limit) + "\n" +
+		// 需要剔除右侧空白, 可用 merge builtin 测试
+		return LineWrapper(strings.TrimRightFunc(text[:n-1], unicode.IsSpace), prefix, limit) + "\n\n" +
 			LineWrapper(text[n+27:], prefix, limit)
 	}
-
 	for _, r = range text {
 		// 预读取一个
 		r, next = next, r
@@ -168,6 +167,7 @@ func LineWrapper(text string, prefix string, limit int) (wrap string) {
 
 		w += n
 		keep := strings.IndexRune(KeepPunct, next) != -1
+
 		// 多字节及时换行
 		if n != 1 {
 			if keep || w < limit {

@@ -28,7 +28,7 @@ The commands are:
     diff    compare the source and target, all difference output
     first   compare the source and target, the first difference output
     code    prints a formatted string to target as Go source code
-    text    prints a formatted string to target as godoc
+    plain   prints plain text documentation to target as godoc
     merge   merge source doc to target
 
 The source are:
@@ -108,23 +108,48 @@ func main() {
 			source = docu.GOROOT + docu.SrcElem
 		}
 	}
+
 	if target == "" &&
 		(command == "first" || command == "diff" || command == "merge") {
 		command = "help"
 	}
+	source = docu.Abs(source)
+	target = docu.Abs(target)
+
 	ch := make(chan interface{})
 	go walkPath(ch, sub, source)
 	switch command {
-	case "code", "text":
+	case "code", "plain":
 		err = showMode(command, mode, ch, target, lang)
 	case "first", "diff":
+		target = docu.Abs(target)
 		// 如果目录结构不同, 不进行文档对比
 		if sub {
-			d1 := diffTree(mode, false, source, target)
-			d2 := diffTree(mode, true, target, source)
-			if d1 || d2 {
+			var d1, d2 bool
+
+			prefix := fmt.Sprintf("source: %s\ntarget: %s\n\nsource target import_path\n",
+				source, target)
+
+			d1, err = diffTree(prefix, "  path  none ", "  path  file ", mode, ch, source, target)
+			if err != nil {
 				break
 			}
+			close(ch)
+
+			pos := posForImport(source)
+			tpath := filepath.Join(target, source[pos:])
+			if d1 {
+				prefix = ""
+			}
+			ch = make(chan interface{})
+			go walkPath(ch, sub, tpath)
+			d2, err = diffTree(prefix, "  none  path ", "  file  path ", mode, ch, tpath, source[:pos])
+			if err != nil || d1 || d2 {
+				break
+			}
+
+			ch = make(chan interface{})
+			go walkPath(ch, sub, source)
 		}
 		err = diffMode(command, mode, ch, source, target)
 	case "merge":
@@ -182,7 +207,7 @@ func showMode(command string, mode docu.Mode, ch chan interface{}, target, lang 
 	fs := docu.Target(target)
 
 	docgo := docu.DocGo
-	if command == "text" {
+	if command == "plain" {
 		docgo = docu.Godoc
 	}
 
@@ -289,43 +314,48 @@ func diffMode(command string, mode docu.Mode, ch chan interface{}, source, targe
 	return
 }
 
-// diffTree 比较目录结构是否相同
-func diffTree(mode docu.Mode, swap bool, source, target string) (diff bool) {
-	var ok bool
-	var err error
-	var fi os.FileInfo
-	ch := make(chan interface{})
-	go walkPath(ch, true, source)
-	pos := len(source)
-	if strings.LastIndexAny(source, `\/`)+1 != pos {
-		pos++
+func posForImport(s string) (pos int) {
+	pos = strings.Index(s, docu.SrcElem)
+	if pos != -1 {
+		pos += len(docu.SrcElem)
+	} else if strings.HasSuffix(s, docu.SrcElem[:len(docu.SrcElem)-1]) {
+		pos = len(s)
 	}
-	prefix := ""
-	if !swap {
-		prefix = fmt.Sprintf("source: %s\ntarget: %s\n\nsource target import_path\n", source, target)
+	return
+}
+
+// diffTree 比较目录结构是否相同
+func diffTree(prefix, prenone, prefile string, mode docu.Mode, ch chan interface{}, source, target string) (diff bool, err error) {
+	var fi os.FileInfo
+	pos := posForImport(source)
+	if pos == -1 {
+		err = errors.New("invalid path: " + source)
+		fmt.Println(prefix)
+		return
+	}
+	if pos == len(source) && source[pos-1] != os.PathSeparator {
+		pos++ // 去掉 "/"
 	}
 	output := os.Stdout
 	for i := <-ch; i != nil; i = <-ch {
-		if err, ok = i.(error); !ok {
-			source = i.(string)
-			source = source[pos:]
-		}
+		err, _ = i.(error)
 		if err != nil {
 			break
 		}
+
+		source = i.(string)
+		source = source[pos:] // 计算 import path
 		fi, err = os.Stat(filepath.Join(target, source))
 		if os.IsNotExist(err) {
-			if swap {
-				_, err = fmt.Fprintln(output, "  none  path ", source)
-			} else {
-				_, err = fmt.Fprintln(output, prefix+"  path  none ", source)
+			_, err = fmt.Fprintln(output, prefix+prenone, source)
+			if err != nil {
+				break
 			}
 			diff, err, prefix = true, nil, ""
 		} else if err == nil && !fi.IsDir() { // 虽然不大能
-			if swap {
-				_, err = fmt.Fprintln(output, "  file  path ", source)
-			} else {
-				_, err = fmt.Fprintln(output, prefix+"  path  file ", source)
+			_, err = fmt.Fprintln(output, prefix+prefile, source)
+			if err != nil {
+				break
 			}
 			diff, prefix = true, ""
 		}
@@ -333,10 +363,6 @@ func diffTree(mode docu.Mode, swap bool, source, target string) (diff bool) {
 			break
 		}
 		ch <- nil
-	}
-	close(ch)
-	if err != nil {
-		log.Fatal(err)
 	}
 	return
 }
@@ -346,7 +372,7 @@ func mergeMode(mode docu.Mode, ch chan interface{}, source, target, lang string)
 	var paths, tpaths []string
 	var du, tu *docu.Docu
 
-	//fs := docu.Target(target)
+	// fs := docu.Target(target)
 
 	for i := <-ch; i != nil; i = <-ch {
 		if err, ok = i.(error); !ok {
