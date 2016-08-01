@@ -55,7 +55,7 @@ func flagParse() (mode docu.Mode, command, source, target, lang string) {
 
 	flag.StringVar(&docu.GOROOT, "goroot", docu.GOROOT, "Go root directory")
 	flag.StringVar(&gopath, "gopath", os.Getenv("GOPATH"), "specifies gopath")
-	flag.StringVar(&lang, "lang", "origin", "the lang pattern for the output file, form like xx[_XX]")
+	flag.StringVar(&lang, "lang", "", "the lang pattern for the output file, form like en or zh_CN")
 	flag.BoolVar(&u, "u", false, "show unexported symbols as well as exported")
 	flag.BoolVar(&cmd, "cmd", false, "show symbols with package docs even if package is a command")
 	flag.BoolVar(&test, "test", false, "show symbols with package docs even if package is a testing")
@@ -198,18 +198,19 @@ func showMode(command string, mode docu.Mode, ch chan interface{}, target, lang 
 	var ok bool
 	var source string
 	var paths []string
-	var du *docu.Docu
+	var du, tu *docu.Docu
 	var output *os.File
-	merge := mode&1<<30 != 0
-	if merge {
-		mode -= 1 << 30
-	}
-	fs := docu.Target(target)
 
+	fs := docu.Target(target)
+	ext := ".go"
 	docgo := docu.DocGo
 	if command == "plain" {
 		docgo = docu.Godoc
+		ext = ".text"
 	}
+	// 先不要过滤
+	showUn := mode&docu.ShowUnexported != 0
+	mode |= docu.ShowUnexported
 
 	out := false
 	for i := <-ch; i != nil; i = <-ch {
@@ -221,8 +222,32 @@ func showMode(command string, mode docu.Mode, ch chan interface{}, target, lang 
 		if err != nil {
 			break
 		}
-		for _, key := range paths {
-			output, err = fs.Create(key, lang, ".go")
+
+		for i, key := range paths {
+			file := du.MergePackageFiles(key)
+			if i == 0 && target != "" {
+				path := fs.NormalPath(key, lang)
+				if path != "" {
+					// 载入全部包
+					tu = docu.New(mode)
+					_, err = tu.Parse(path, nil)
+					if err != nil {
+						break
+					}
+				}
+			}
+
+			norfile := tu.MergePackageFiles(key)
+			if norfile != nil {
+				docu.SortDecl(norfile.Decls).Filter(file)
+			} else if !showUn {
+				docu.ExportedFileFilter(file)
+			}
+			// 测试一下
+			if false {
+				output, err = fs.Create(key, lang, ext)
+			}
+			output = os.Stdout
 			if err != nil {
 				break
 			}
@@ -232,7 +257,7 @@ func showMode(command string, mode docu.Mode, ch chan interface{}, target, lang 
 				}
 				out = true
 			}
-			err = docgo(output, key, du.FileSet, du.MergePackageFiles(key))
+			err = docgo(output, key, du.FileSet, file)
 			if target != "" {
 				output.Close()
 			}

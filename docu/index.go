@@ -105,6 +105,26 @@ func (s SortDecl) Search(identLit string) ast.Decl {
 	return nil
 }
 
+// SearchFunc 查找 funcIdentLit 对应的 ast.FuncDecl.
+func (s SortDecl) SearchFunc(funcIdentLit string) *ast.FuncDecl {
+	if funcIdentLit == "" || funcIdentLit == "<nil>" {
+		return nil
+	}
+	for _, node := range []ast.Decl(s) {
+		switch n := node.(type) {
+		case *ast.FuncDecl:
+			lit := FuncIdentLit(n)
+			if lit == funcIdentLit {
+				return n
+			}
+			if lit > funcIdentLit {
+				break
+			}
+		}
+	}
+	return nil
+}
+
 // SearchSpec 查找 specIdentLit 对应的 ast.Spec.
 func (s SortDecl) SearchSpec(specIdentLit string) ast.Spec {
 	if specIdentLit == "" || specIdentLit == "<nil>" {
@@ -121,6 +141,12 @@ func (s SortDecl) SearchSpec(specIdentLit string) ast.Spec {
 		}
 	}
 	return nil
+}
+
+// Filter 过滤掉 file 中的非导出顶级声明, 如果 s 中没有该声明的话.
+// imports 声明总是被保留.
+func (s SortDecl) Filter(file *ast.File) bool {
+	return exportedFileFilter(file, s)
 }
 
 // SortImports 实现 sort.Interface. 按照 import path 进行排序.

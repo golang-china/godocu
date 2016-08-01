@@ -1,6 +1,6 @@
 # GoDocu
 
-godocu 基于 [docu] 实现的命令行工具, 从 Go 源码提取并生成文档.
+godocu 基于 [docu] 实现的指令行工具, 从 Go 源码提取并生成文档.
 
 功能:
 
@@ -13,6 +13,7 @@ godocu 基于 [docu] 实现的命令行工具, 从 Go 源码提取并生成文�
   - 简单比较包文档的不同之处
   - 遍历目录
   - 合并不同版本的注释
+  - 自动识别非导出文档
 
 该工具在 Golang 官方包下测试通过, 非官方包请核对输出结果.
 
@@ -55,15 +56,59 @@ The arguments are:
   -goroot string
       Go root directory (default "/usr/local/Cellar/go/1.6/libexec")
   -lang string
-      the lang pattern for the output file, form like xx[_XX] (default "origin")
+      the lang pattern for the output file, form like en or zh_CN
   -test
       show symbols with package docs even if package is a testing
   -u  show unexported symbols as well as exported
 ```
 
+# source
+
+source 用于计算 go 源码文件, 可以是绝对路径表示的目录或者文件.
+如果是 import path, godocu 会在 GOROOT, GOPATH 中查找并计算出绝对路径.
+
+非独立文件 source 可以后缀 `...` 表示遍历子目录.
+
+# target
+
+对于 `diff`, `first` 指令, target 是文件或目录, 输出到 Stdout.
+
+对于 `code`, `plain` , `merge' 指令, target 是生成文档基础路径,
+子路径和文件名由 source 和 `lang` 参数计算得出.
+
+文件名前缀由包名称计算得到 `doc`, `main` 或 `test`.
+
+如果参数 `lang` 非空, 添加后缀 `_{lang}`. 这是 docu 的命名风格.
+
+扩展名
+
+ - `code`,`merge` 指令输出扩展名为 ".go".
+ - `plain` 指令扩展名为 ".text".
+
+# lang
+
+参数 `lang` 指定输出文件名后缀, 格式为 lang 或 lang_ISOCountryCode.
+即 lang 部分为小写, ISOCountryCode 部分为大写.
+
+方便起见, `docu.LangNormal` 会进行规范化处理.
+
+由于文件名有固定格式, godouc 会通过 target 中已存在的文件名计算得到.
+
+如果 `lang` 非空, 新建或覆盖计算后的目标文件.
+如果 `lang` 为空, 且目标文件符合 docu 命名风格, 目标文件被覆盖.
+
+# unexported
+
+参数 'u' 允许输出非导出顶级声明, 现实中有这样的需求. 比如 `builtin` 包的声明都是非导出的, 但其文档在 Go 文档中是不可或缺的.
+
+也许某个文档仅需要包含特别的非导出声明, Godocu 的非导出优先策略是:
+
+ 1. 已存在符合 docu 命名风格的 ".go" 文档, 目标中的非导出声明被保留
+ 2. 否则按是否使用了 'u' 参数处理.
+
 # Diff
 
-命令 `first` 比较两个包, 输出首个差异信息, `diff` 输出全部差异信息.
+指令 `first` 比较两个包, 输出首个差异信息, 而 `diff` 输出全部差异信息.
 
 要求由 source,target 计算出的绝对路径必须包含 "/src/".
 
@@ -91,6 +136,12 @@ FROM: package reflect
 不同:
     func DeepEqual(a1, a2 interface{}) bool
 来自: package reflect
+```
+
+比较 go/types 在当前版本 1.6.2 和老版本的差异
+
+```shell
+$ godocu diff go/types /usr/local/Cellar/go/1.5.3/libexec/src
 ```
 
 输出
@@ -179,18 +230,6 @@ DIFF:
     )
 
 TEXT:
-    Type ImportMode
-DIFF:
-    none
-TEXT:
-    Type ImporterFrom
-DIFF:
-    none
-TEXT:
-    Type Struct struct{fields []*Var; tags []string; offsets []int64; offsetsOnce sync.Once}
-DIFF:
-    Type Struct struct{fields []*Var; tags []string; offsets []int64}
-TEXT:
     func (*Config) Check(path string, fset *token.FileSet, files []*ast.File, info *Info)
     (*Package, error)
 
@@ -227,27 +266,23 @@ DIFF:
 FROM: package go/types
 ```
 
+go 1.6.2 的 Doc 注释多了一行
 
-go 1.6.2 的 Doc 注释多了一行 `For a tutorial, see https://golang.org/s/types-tutorial.`.
-其他还有一些变化.
+    For a tutorial, see https://golang.org/s/types-tutorial.
+
+和其它一些变化.
 
 如果看到的不是 `TEXT:` 而是 `FORM:` 表示折叠为一行后值相同, 即格式发生变化,
 
-遍历
-
-```shell
-$ godocu code go...
-```
-
-遍历比较 "cmd" 以及子目录
+遍历比较 "cmd" 及其子目录
 
 ```shell
 $ godocu diff cmd... /usr/local/Cellar/go/1.5.2/libexec/src/
 ```
 
-输出:
+因目录结构不同, 不进行文档对比.
 
-因目录结构不同, 只输出不同的目录, 不进行文档对比.
+输出:
 
 ```
 source: /usr/local/Cellar/go/1.6.2/libexec/src/cmd
@@ -277,11 +312,19 @@ source target import_path
 
 # Merge
 
-merge 命令对两个相同导入路径的包文档进行合并. 细节:
+merge 指令对两个相同导入路径的包文档进行合并. 细节:
 
  - 只有 source, target 中相同的顶级声明文档会被合并.
  - source 的文档在 target 顶部
  - 如果 target 没有 import, 添加 source 的 import
+ - 只有带上 `lang` 参数才会覆盖 target, 否则仅仅打印结果.
 
+合并 `builtin` 包文档到 golang-china 的翻译项目.
+因 `builtin` 包中的声明都是非导出的, 如果依照前文参数部分要加上 `-u` 才符合真实需求.
+这无疑给
+
+```shell
+$ godocu merge -u builtin github.com/golang-china/golangdoc.translations/src
+```
 
 [docu]: https://godoc.org/github.com/golang-china/godocu/docu

@@ -48,7 +48,12 @@ func New(mode Mode) *Docu {
 	return du
 }
 
+// Package 返回 key 对应的 *ast.Package.
+// key 为 MergePackageFiles 返回的 paths 元素.
 func (du *Docu) Package(key string) *ast.Package {
+	if du == nil {
+		return nil
+	}
 	pkg, ok := du.astpkg[key]
 	if !ok || pkg == nil {
 		return nil
@@ -58,6 +63,9 @@ func (du *Docu) Package(key string) *ast.Package {
 
 // MergePackageFiles 合并 import paths 的包为一个已排序的 ast.File 文件.
 func (du *Docu) MergePackageFiles(paths string) (file *ast.File) {
+	if du == nil {
+		return nil
+	}
 	pkg, ok := du.astpkg[paths]
 	if !ok || pkg == nil {
 		return

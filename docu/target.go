@@ -2,6 +2,7 @@ package docu
 
 import (
 	"errors"
+	"go/ast"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,15 +11,57 @@ import (
 // SrcElem 本地文件系统中的 "/src/".
 const SrcElem = string(os.PathSeparator) + "src" + string(os.PathSeparator)
 
+// IsNormalName 返回 name 是否符合 Docu 命名风格.
+// name 必须具有扩展名.
+func IsNormalName(name string) bool {
+	pos := strings.LastIndexByte(name, '.')
+	if pos == -1 || pos+1 == len(name) {
+		return false
+	}
+	name = name[:pos]
+	ss := strings.SplitN(name, "_", 2)
+	if ss[0] != "doc" && ss[0] != "main" && ss[0] != "test" {
+		return false
+	}
+	return len(ss) == 1 || IsNormalLang(ss[1])
+}
+
+func IsNormalLang(lang string) bool {
+	ss := strings.SplitN(lang, "_", 2)
+	if lang = ss[0]; lang == "" {
+		return false
+	}
+	for i := 0; i < len(lang); i++ {
+		if lang[i] < 'a' || lang[i] > 'z' {
+			return false
+		}
+	}
+	if len(ss) == 1 {
+		return true
+	}
+	if lang = ss[1]; lang == "" {
+		return false
+	}
+	for i := 0; i < len(lang); i++ {
+		if lang[i] < 'A' || lang[i] > 'Z' {
+			return false
+		}
+	}
+	return true
+}
+
 // LangNormal 对 lang 进行检查并格式化.
 // 如果 lang 不符合要求, 返回空字符串.
 func LangNormal(lang string) string {
-	ss := strings.SplitN(strings.ToLower(lang), "_", 2)
-	if len(ss) == 0 {
+	ss := strings.Split(strings.ToLower(lang), "_")
+	lang = ss[0]
+	if len(ss) > 2 || lang == "" {
 		return ""
 	}
-	lang = ss[0]
 	if len(ss) == 2 {
+		if ss[1] == "" {
+			return ""
+		}
 		lang += "_" + strings.ToUpper(ss[1])
 	}
 	for i := 0; i < len(lang); i++ {
@@ -32,13 +75,30 @@ func LangNormal(lang string) string {
 	return lang
 }
 
+// IsNormalPkg 返回生成 pkg 的文件是否符合 Docu 命名风格.
+func IsNormalPkg(pkg *ast.Package) bool {
+	if pkg == nil || len(pkg.Files) != 1 {
+		return false
+	}
+
+	for abs := range pkg.Files {
+		if !strings.HasSuffix(abs, ".go") ||
+			!IsNormalName(filepath.Base(abs)) {
+
+			return false
+		}
+	}
+
+	return true
+}
+
 // Target 创建(覆盖)统一风格的本地文件.
 type Target string
 
-// Create 在 Target 目录建立 paths,lang,ext 对应的文件.
+// Create 在 Target 目录建立 path,lang,ext 对应的文件.
 // 参数:
 //   path 为 Docu.Parse 返回的 paths 元素
-//   lang 写入文件内容所使用的语言, 非空.
+//   lang 写入文件内容所使用的语言.
 //   ext  文件扩展名, 允许为空
 // 最终生成的文件名可能是:
 //   doc_lang.ext
@@ -48,19 +108,30 @@ func (t Target) Create(path, lang, ext string) (file *os.File, err error) {
 	if t == "" {
 		return os.Stdout, nil
 	}
-	lang = LangNormal(lang)
-	if lang == "" || path == "" {
-		err = errors.New("Target.Create: invaild path or lang.")
-		return
+	if lang != "" {
+		if lang = LangNormal(lang); lang == "" {
+			err = errors.New("Target.Create: invaild path or lang.")
+			return
+		}
 	}
+
 	if ext != "" && ext[0] != '.' {
 		ext = "." + ext
 	}
+
 	doc := "doc"
 	if pos := strings.Index(path, "::"); pos != -1 {
 		doc, path = path[pos+2:], path[:pos]
 	}
-	doc += "_" + strings.ToLower(lang+ext)
+	if lang != "" {
+		doc += "_" + lang
+	}
+	if ext != "" {
+		if ext[0] != '.' {
+			doc += "."
+		}
+		doc += strings.ToLower(ext)
+	}
 
 	path = filepath.Join(string(t), path, doc)
 	err = os.MkdirAll(filepath.Dir(path), 0777)
@@ -70,18 +141,52 @@ func (t Target) Create(path, lang, ext string) (file *os.File, err error) {
 	return
 }
 
-// FromSource 用于来源目录和目标目录不同的情况.
-// 通过查找 source 中的 SrcElem 位置计算出目标下的子路径, 然后调用 Create.
-func (t Target) FromSource(source, path, lang, ext string) (file *os.File, err error) {
+// NormalPath 如果 Target 下 path 子目录的所有 ".go" 文件都符合 Docu 命名风格,
+// 返回绝对路径, 否则返回 "".
+// 参数:
+//   path 为 Docu.Parse 返回的 paths 元素.
+func (t Target) NormalPath(path, lang string) string {
 	if t == "" {
-		return os.Stdout, nil
+		return ""
 	}
 
-	pos := strings.LastIndex(source, SrcElem)
-	if pos == -1 || pos+5 == len(source) {
-		err = errors.New("Target.FromSource: invaild source: " + source)
-		return
+	pos := strings.Index(path, "::")
+	if pos != -1 {
+		path = path[:pos]
 	}
-	// 通过 source 绝对目录计算目标路径
-	return t.Create(filepath.Join(source[pos+5:], path), lang, ext)
+
+	path = filepath.Join(string(t), path)
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	names, err := f.Readdirnames(-1)
+	f.Close()
+	if err != nil {
+		return ""
+	}
+	lang = LangNormal(lang)
+	if lang != "" {
+		lang = "_" + lang + ".go"
+	}
+	find := false
+	for _, name := range names {
+		if !strings.HasSuffix(name, ".go") {
+			continue
+		}
+		// 必须都符合规范
+		if !IsNormalName(name) {
+			return ""
+		}
+		// 特定 lang 也要有
+		if lang != "" && !strings.HasSuffix(name, lang) {
+			continue
+		}
+		find = true
+
+	}
+	if !find {
+		return ""
+	}
+	return path
 }
