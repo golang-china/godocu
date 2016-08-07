@@ -2,6 +2,7 @@ package docu
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/doc"
@@ -38,15 +39,33 @@ func ToSource(output io.Writer, text string) error {
 }
 
 // FormatComments 调用 LineWrapper 换行格式化注释 text 输出到 output.
+// 该方法会移除 GoDocu 分割线 ___GoDocu_Dividing_line___
 func FormatComments(output io.Writer, text, prefix string, limit int) (err error) {
+	n := strings.Index(text, "___GoDocu_Dividing_line___")
+	if n > 1 {
+		if text[n-1] != '\n' && text[n+26] != '\n' {
+			return errors.New("invalid ___GoDocu_Dividing_line___")
+		}
+		// 需要剔除右侧空白, 可用 merge builtin 测试
+		err = FormatComments(output, strings.TrimRightFunc(text[:n-1], unicode.IsSpace), prefix, limit)
+		if err == nil {
+			if _, err = io.WriteString(output, "\n"); err == nil {
+				err = FormatComments(output, text[n+27:], prefix, limit)
+			}
+		}
+		return
+	}
 	if text != "" {
 		var buf bytes.Buffer
-		// 利用 ToText 的 preIndent 功能先缩成一行
+		// 利用 ToText 的 preIndent 功能合并连续行
 		if !IsWrapped(text, limit) {
 			doc.ToText(&buf, text, "", "    ", 1<<32)
 			text = buf.String()
+		} else {
+			limit = 1 << 32
 		}
 		_, err = io.WriteString(output, LineWrapper(text, prefix, limit))
+
 	}
 	return
 }
@@ -54,8 +73,8 @@ func FormatComments(output io.Writer, text, prefix string, limit int) (err error
 // UrlPos 识别 text 第一个网址出现的位置.
 func UrlPos(text string) (pos int) {
 	pos = strings.Index(text, "://")
-	if pos == -1 {
-		return
+	if pos <= 0 {
+		return -1
 	}
 	pos--
 	for pos != 0 {
@@ -70,76 +89,100 @@ func UrlPos(text string) (pos int) {
 }
 
 // IsWrapped 检查 text 每一行的长度都小于等于 limit.
+// tab 按四个长度计算, 多字节按两个长度计算.
 func IsWrapped(text string, limit int) bool {
-	n, w := 0, 0
-	// 检查是否已经排好版
-	for n != -1 {
-		text = text[w:]
-		n = strings.IndexByte(text, '\n')
-		if n == -1 {
-			w = len(text)
-		} else {
-			w = n
+	w := 0
+	for _, r := range text {
+		switch r {
+		case '\n':
+			w = 0
+		case '\t':
+			w += 4
+		default:
+			if r > unicode.MaxLatin1 {
+				w += 2
+			} else {
+				w++
+			}
 		}
-		if w >= limit {
+		if w > limit {
 			return false
 		}
-		w = n + 1
 	}
 	return true
 }
 
-// KeepPunct 是 LineWrapper 进行换行时行尾要保留标点符号
+func visualWidth(text string) (w int) {
+	for _, r := range text {
+		if r > unicode.MaxLatin1 {
+			w += 2
+		} else {
+			w++
+		}
+	}
+	return
+}
+
+// KeepPunct 当这些标点符号位于行尾时, 前一个词会被折到下一行.
 var KeepPunct = `,.:;?，．：；？。`
+
+// WrapPunct 当这些标点符号位于行尾时, 会被折到下一行.
+var WrapPunct = "`!*@" + `"'[(“（［`
+
+func runeWidth(r rune) int {
+	if r == 0 {
+		return 0
+	}
+	if r > unicode.MaxLatin1 {
+		switch width.LookupRune(r).Kind() {
+		case width.EastAsianAmbiguous, width.EastAsianWide, width.EastAsianFullwidth:
+			return 2
+		}
+	}
+	return 1
+}
 
 // LineWrapper 把 text 非缩进行超过显示长度 limit 的行插入换行符 "\n".
 // 细节:
 //	text   行间 tab 按 4 字节宽度计算.
 //	prefix 为每行前缀字符串.
 //	limit  的长度不包括 prefix 的长度.
-//	位于换行处的标点符被保留.
-//	移除 GoDocu 分割线
+//	返回 wrap 的尾部带换行
 func LineWrapper(text string, prefix string, limit int) (wrap string) {
+	// go scanner 已经剔除了 '\r', 统一为 '\n' 风格
 	const nl = "\n"
-	var lf, r, next rune
+	var r, next rune
 	var isIndent bool
 	var last, word string // 最后一行前部和尾部单词
-	n, w := 0, 0
-
-	n = strings.Index(text, "___GoDocu_Dividing_line___")
-	if n > 1 && (text[n-1] == '\n' || text[n-1] == '\r') &&
-		(text[n+26] == '\n' || text[n+26] == '\r') {
-		// 需要剔除右侧空白, 可用 merge builtin 测试
-		return LineWrapper(strings.TrimRightFunc(text[:n-1], unicode.IsSpace), prefix, limit) + "\n\n" +
-			LineWrapper(text[n+27:], prefix, limit)
+	if text == "" {
+		return ""
 	}
+	n, w, nw, ww := 0, 0, 0, 0
 	for _, r = range text {
 		// 预读取一个
 		r, next = next, r
 		if r == 0 {
+			// 剔除首行缩进
+			if wrap == "" && (next == ' ' || next == '\t' || w == 0 && next == '\n') {
+				next = 0
+				continue
+			}
+			nw = runeWidth(next)
 			continue
 		}
 		switch r {
-		case '\r':
+		case '\n':
 			if wrap != "" || last != "" || word != "" {
 				wrap += strings.TrimRight(prefix+last+word, " ") + nl
 			}
-			w, last, word = 0, "", ""
-			isIndent, lf = false, r
-			continue
-		case '\n':
-			if lf != '\r' {
-				if wrap != "" || last != "" || word != "" {
-					wrap += strings.TrimRight(prefix+last+word, " ") + nl
-				}
-				w, last, word = 0, "", ""
-			}
-			lf, isIndent = r, false
+			w, ww, last, word = 0, 0, "", ""
+			isIndent = false
+			nw = runeWidth(next)
 			continue
 		case '\t':
 			// tab 缩进替换为 4 空格, 保持行间 tab
-			if lf == '\n' || lf == '\r' {
-				w, last, word = w/4*4+4, last+"    ", ""
+			if last == "" || len(word) >= 4 && word[:4] == "    " {
+				w, word = w+4, word+"    "
 				isIndent = true
 			} else {
 				w, last, word = w/4*4+4, last+"\t", ""
@@ -147,74 +190,74 @@ func LineWrapper(text string, prefix string, limit int) (wrap string) {
 			continue
 		case ' ':
 			// 行首连续两个空格算做缩进
-			if next == ' ' && (lf == '\n' || lf == '\r') {
+			if next == ' ' && last == "" {
 				isIndent = true
 			}
 		}
-		n, lf = 1, r
 
 		if isIndent {
 			word += string(r)
 			continue
 		}
-
-		if r > unicode.MaxLatin1 {
-			switch width.LookupRune(r).Kind() {
-			case width.EastAsianAmbiguous, width.EastAsianWide, width.EastAsianFullwidth:
-				n = 2
-			}
-		}
+		n, nw = nw, runeWidth(next)
 
 		w += n
-		keep := strings.IndexRune(KeepPunct, next) != -1
-
-		// 多字节及时换行
-		if n != 1 {
-			if keep || w < limit {
-				last += word + string(r)
-			} else if w == limit {
-				wrap += prefix + last + word + string(r) + nl
-				w, last = 0, ""
-			} else {
-				wrap += strings.TrimRight(prefix+last+word, " ") + nl
-				w, last = 0, string(r)
-			}
-			word = ""
-			continue
+		ww += n // word width
+		word += string(r)
+		// 确定下一个 rune 归属行
+		if n == 2 || r == ' ' || n != nw {
+			// 分离单词或者单字节多字节混合, 例如: 值value
+			last += word
+			word, ww = "", 0
 		}
 
-		// 保持单词完整性.
-		if !keep && r != ' ' {
-			word += string(r)
-			continue
-		}
-
-		if keep || w < limit {
-			last, word = last+word+string(r), ""
-			// 识别网址
-			if w > limit {
-				pos := UrlPos(last)
-				if pos == 0 {
-					wrap += strings.TrimRight(prefix+last, " ") + nl
-					w = 0
-				} else if pos != -1 {
-					wrap += strings.TrimRight(prefix+last[:pos], " ") + nl
-					last = last[pos:]
-					w = len(last)
-					if w > limit {
-						wrap += strings.TrimRight(prefix+last, " ") + nl
-						w, last = 0, ""
-					}
-				}
+		if w == limit {
+			if next == ' ' || next == '\n' {
+				next = '\n'
+				continue
 			}
-		} else if w == limit || r == ' ' || r == '　' {
-			wrap += strings.TrimRight(prefix+last+word+string(r), " ") + nl
-			w, last, word = 0, "", ""
-		} else {
 			wrap += strings.TrimRight(prefix+last, " ") + nl
-			w, last, word = n, "", word+string(r)
+			last = ""
+			w = ww
+			continue
 		}
+
+		if w+nw <= limit {
+			continue
+		}
+		if next != ' ' && strings.IndexRune(KeepPunct, next) != -1 {
+			wrap += strings.TrimRight(prefix+last, " ") + nl
+			last = ""
+			w = ww
+			continue
+		}
+
+		if next != ' ' && strings.IndexRune(WrapPunct, next) != -1 {
+			wrap += strings.TrimRight(prefix+last+word, " ") + nl
+			last, word = "", string(next)
+			w, ww = nw, nw
+			next, nw = 0, 0
+			continue
+		}
+
+		if pos := UrlPos(last); pos != -1 {
+			if pos == 0 {
+				wrap += strings.TrimRight(prefix+last, " ") + nl
+				last = ""
+				w = ww
+			} else {
+				wrap += strings.TrimRight(prefix+last[:pos], " ") + nl
+				last, word = last[pos:]+word, ""
+				w, ww = visualWidth(last), 0
+			}
+			continue
+		}
+
+		wrap += strings.TrimRight(prefix+last, " ") + nl
+		last = ""
+		w = 0
 	}
+
 	if word != "" || last != "" {
 		wrap += prefix + last + word
 	}
@@ -224,6 +267,10 @@ func LineWrapper(text string, prefix string, limit int) (wrap string) {
 		} else {
 			wrap += string(next)
 		}
+	}
+
+	if wrap[len(wrap)-1] != '\n' {
+		wrap += "\n"
 	}
 	return
 }
@@ -253,11 +300,13 @@ func Godoc(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 		text = `    EXECUTABLE PROGRAM IN PACKAGE ` + paths
 	} else if text == "test" || strings.HasSuffix(text, "_test") {
 		text = `    go test ` + paths
-	} else {
-		text = `    import "` + paths + `"`
+	} else if text = ImportPaths(file); text != "" {
+		text = `    ` + text
 	}
-
-	if err = fprint(output, text, nl); err == nil && file.Doc != nil {
+	if text != "" {
+		err = fprint(output, text, nl)
+	}
+	if err == nil && file.Doc != nil {
 		if err = fprint(output, nl); err == nil {
 			err = ToText(output, file.Doc.Text())
 		}
@@ -376,8 +425,8 @@ func DocGo(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 		text += " // go get " + paths
 	} else if text == "test" || strings.HasSuffix(text, "_test") {
 		text += " // go test " + paths
-	} else {
-		text += ` // import "` + paths + `"`
+	} else if imp := ImportPaths(file); imp != "" {
+		text += ` // ` + imp
 	}
 
 	err = fprint(output, "package ", text, nl+nl)

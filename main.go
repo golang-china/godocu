@@ -64,9 +64,28 @@ func flagParse() (mode docu.Mode, command, source, target, lang string) {
 		flagUsage()
 	}
 
-	flag.CommandLine.Parse(os.Args[2:])
+	args := make([]string, len(os.Args[2:]))
+	j := 0
+	for i := 2; i < len(os.Args); i++ {
+		if os.Args[i][0] == '-' && os.Args[i] != "--" {
+			args[j] = os.Args[i]
+			j++
+		}
+	}
 
-	args := flag.Args()
+	for i := 2; i < len(os.Args); i++ {
+		if os.Args[i][0] != '-' || os.Args[i] == "--" {
+			args[j] = os.Args[i]
+			j++
+		}
+	}
+
+	flag.CommandLine.Parse(args)
+	args = flag.Args()
+
+	// flag.CommandLine.Parse(os.Args[2:])
+	// args := flag.Args()
+
 	if len(args) == 0 || len(args) > 2 {
 		flagUsage()
 	}
@@ -91,6 +110,7 @@ func flagParse() (mode docu.Mode, command, source, target, lang string) {
 	if test {
 		mode |= docu.ShowTest
 	}
+	lang = docu.LangNormal(lang)
 
 	return
 }
@@ -114,18 +134,30 @@ func main() {
 		command = "help"
 	}
 	source = docu.Abs(source)
-	target = docu.Abs(target)
-
 	ch := make(chan interface{})
 	go walkPath(ch, sub, source)
 	switch command {
 	case "code", "plain":
+		if target == "--" {
+			pos := posForImport(source)
+			if pos == -1 {
+				<-ch
+				err = errors.New("invalid source: " + source)
+				break
+			}
+			if pos < len(source) {
+				target = source[:pos]
+			} else {
+				target = source
+			}
+		}
 		err = showMode(command, mode, ch, target, lang)
 	case "first", "diff":
 		target = docu.Abs(target)
 		// 如果目录结构不同, 不进行文档对比
 		if sub {
 			var d1, d2 bool
+			var spath, tpath string
 
 			prefix := fmt.Sprintf("source: %s\ntarget: %s\n\nsource target import_path\n",
 				source, target)
@@ -136,14 +168,20 @@ func main() {
 			}
 			close(ch)
 
+			// 交换 source,target
 			pos := posForImport(source)
-			tpath := filepath.Join(target, source[pos:])
+			if pos < len(source) {
+				spath, tpath = filepath.Join(target, source[pos:]), source[:pos]
+			} else {
+				spath, tpath = target, source
+			}
+
 			if d1 {
 				prefix = ""
 			}
 			ch = make(chan interface{})
-			go walkPath(ch, sub, tpath)
-			d2, err = diffTree(prefix, "  none  path ", "  file  path ", mode, ch, tpath, source[:pos])
+			go walkPath(ch, sub, spath)
+			d2, err = diffTree(prefix, "  none  path ", "  file  path ", mode, ch, spath, tpath)
 			if err != nil || d1 || d2 {
 				break
 			}
@@ -200,7 +238,6 @@ func showMode(command string, mode docu.Mode, ch chan interface{}, target, lang 
 	var paths []string
 	var du, tu *docu.Docu
 	var output *os.File
-
 	fs := docu.Target(target)
 	ext := ".go"
 	docgo := docu.DocGo
@@ -225,9 +262,9 @@ func showMode(command string, mode docu.Mode, ch chan interface{}, target, lang 
 
 		for i, key := range paths {
 			file := du.MergePackageFiles(key)
+			lan := lang
 			if i == 0 && target != "" {
-				path := fs.NormalPath(key, lang)
-				if path != "" {
+				if path := fs.NormalPath(key, lang, ext); path != "" {
 					// 载入全部包
 					tu = docu.New(mode)
 					_, err = tu.Parse(path, nil)
@@ -237,30 +274,29 @@ func showMode(command string, mode docu.Mode, ch chan interface{}, target, lang 
 				}
 			}
 
+			// 有目标, 以目标过滤源, 否则无 showUnexported 时进行过滤.
 			norfile := tu.MergePackageFiles(key)
 			if norfile != nil {
 				docu.SortDecl(norfile.Decls).Filter(file)
+				lan = tu.NormalLang(key) // 提取目标语言作为文件名参数
 			} else if !showUn {
 				docu.ExportedFileFilter(file)
 			}
-			// 测试一下
-			if false {
-				output, err = fs.Create(key, lang, ext)
+
+			output, err = fs.Create(key, lan, ext)
+			lang = lan
+
+			if err == nil && out && target == "" {
+				_, err = os.Stdout.WriteString(sp)
 			}
-			output = os.Stdout
-			if err != nil {
-				break
+			out = true
+			if err == nil {
+				err = docgo(output, key, du.FileSet, file)
 			}
-			if target == "" {
-				if out {
-					io.WriteString(output, sp)
-				}
-				out = true
-			}
-			err = docgo(output, key, du.FileSet, file)
 			if target != "" {
 				output.Close()
 			}
+
 			if err != nil {
 				break
 			}
@@ -288,19 +324,19 @@ func diffMode(command string, mode docu.Mode, ch chan interface{}, source, targe
 			du = docu.New(mode)
 			paths, err = du.Parse(i.(string), nil)
 		}
-		if err == nil {
-			if len(paths) == 0 {
-				// BUG: 有可能一个为空目录, 另一个非空
-				ch <- nil
-				continue
-			}
-			tu = docu.New(mode)
-			tpaths, err = tu.Parse( // 处理多包
-				filepath.Join(target, strings.Split(paths[0], "::")[0]), nil)
-		}
-
 		if err != nil {
 			break
+		}
+		// 必须两个都有相同的包才进行对比.
+		// source 不能有错, 因已经进行了 diffTree 比较, target 的错误被忽略.
+		tu = docu.New(mode)
+		tpaths, err = tu.Parse( // 处理多包
+			filepath.Join(target, strings.Split(paths[0], "::")[0]), nil)
+
+		if len(paths) == 0 || len(tpaths) == 0 {
+			err = nil
+			ch <- nil
+			continue
 		}
 
 		diff, err = docu.TextDiff(output, "packages "+strings.Join(paths, ","),
@@ -344,7 +380,7 @@ func posForImport(s string) (pos int) {
 	if pos != -1 {
 		pos += len(docu.SrcElem)
 	} else if strings.HasSuffix(s, docu.SrcElem[:len(docu.SrcElem)-1]) {
-		pos = len(s)
+		pos = len(s) + 1
 	}
 	return
 }
@@ -355,11 +391,7 @@ func diffTree(prefix, prenone, prefile string, mode docu.Mode, ch chan interface
 	pos := posForImport(source)
 	if pos == -1 {
 		err = errors.New("invalid path: " + source)
-		fmt.Println(prefix)
 		return
-	}
-	if pos == len(source) && source[pos-1] != os.PathSeparator {
-		pos++ // 去掉 "/"
 	}
 	output := os.Stdout
 	for i := <-ch; i != nil; i = <-ch {
@@ -393,56 +425,105 @@ func diffTree(prefix, prenone, prefile string, mode docu.Mode, ch chan interface
 }
 
 func mergeMode(mode docu.Mode, ch chan interface{}, source, target, lang string) (err error) {
-	var ok, diff bool
-	var paths, tpaths []string
+	var spaths, tpaths []string
 	var du, tu *docu.Docu
+	var fs docu.Target
+	var output *os.File
 
-	// fs := docu.Target(target)
+	// source 必须含有 '/src/'
+	pos := posForImport(source)
+	if pos == -1 {
+		<-ch
+		err = errors.New("invalid source: " + source)
+		return
+	}
 
+	if lang == "" {
+		fs = docu.Target("")
+	} else {
+		fs = docu.Target(target)
+	}
+
+	// 以 target 限制为过滤条件, 因此允许所有
 	for i := <-ch; i != nil; i = <-ch {
-		if err, ok = i.(error); !ok {
-			du = docu.New(mode)
-			paths, err = du.Parse(i.(string), nil)
+		if err, _ = i.(error); err != nil {
+			break
 		}
-		if err == nil {
-			if len(paths) == 0 {
-				// BUG: 有可能一个为空目录, 另一个非空
-				ch <- nil
+		// 先得到目标
+		tu = docu.New(docu.ShowUnexported | docu.ShowCMD | docu.ShowTest)
+		source = i.(string)
+		tpaths, err = tu.Parse(filepath.Join(target, source[pos:]), nil)
+
+		// 计算 mode
+		mode = docu.ShowUnexported
+		for _, key := range tpaths {
+			key = docu.NormalPkgFileName(tu.Package(key))
+			if key == "" {
+				tpaths = nil
+				break
+			}
+			if strings.HasPrefix(key, "main") {
+				mode |= docu.ShowCMD
+			} else if strings.HasPrefix(key, "test") {
+				mode |= docu.ShowTest
+			}
+		}
+		if len(tpaths) == 0 {
+			err = nil
+			ch <- nil
+			continue
+		}
+
+		// 必须有相同的包才进行对比.
+		// source 不能有错, target 的错误被忽略.
+		du = docu.New(mode)
+		spaths, err = du.Parse(source, nil)
+		if err != nil {
+			break
+		}
+		if len(spaths) == 0 {
+			ch <- nil
+			continue
+		}
+
+		for _, key := range tpaths {
+			// 过滤掉非指定的语言
+			lan := tu.NormalLang(key)
+			if lang != "" && lang != lan {
 				continue
 			}
-			tu = docu.New(mode)
-			tpaths, err = tu.Parse( // 处理多包
-				filepath.Join(target, strings.Split(paths[0], "::")[0]), nil)
-		}
 
-		if err != nil {
-			break
-		}
-		diff, err = docu.TextDiff(os.Stdout, "packages "+strings.Join(paths, ","),
-			"packages "+strings.Join(tpaths, ","))
-
-		if err != nil {
-			break
-		}
-
-		if diff {
-			err = errors.New("the difference between source and target")
-			break
-		}
-
-		for _, key := range paths {
 			src := du.MergePackageFiles(key)
+			// 有可能 source 发生了变化
+			if src == nil {
+				err = errors.New("lost package " + key + ", on " + source)
+				break
+			}
+
 			dis := tu.MergePackageFiles(key)
+			// 总是以目标过滤源
+			docu.SortDecl(dis.Decls).Filter(src)
+
 			if len(dis.Imports) == 0 {
 				dis.Imports = src.Imports
 			}
 
-			if !docu.DiffFormOnly(src.Doc.Text(), dis.Doc.Text()) {
-				docu.MergeDoc(src.Doc, dis.Doc)
+			if src.Doc != nil {
+				if dis.Doc == nil {
+					dis.Doc = src.Doc
+				} else {
+					docu.MergeDoc(src.Doc, dis.Doc)
+				}
 			}
 
 			docu.MergeDecls(src.Decls, dis.Decls)
-			err = docu.DocGo(os.Stdout, key, tu.FileSet, dis)
+			output, err = fs.Create(key, lan, ".go")
+			if err == nil {
+				err = docu.DocGo(output, key, tu.FileSet, dis)
+				if lang != "" {
+					output.Close()
+				}
+			}
 			if err != nil {
 				break
 			}

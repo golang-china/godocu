@@ -75,21 +75,22 @@ func LangNormal(lang string) string {
 	return lang
 }
 
-// IsNormalPkg 返回生成 pkg 的文件是否符合 Docu 命名风格.
-func IsNormalPkg(pkg *ast.Package) bool {
+// NormalPkgFileName 返回符合 Docu 命名风格的 pkg 所使用的文件名.
+// 如果 pkg 不符合  Docu 命名风格返回空字符串.
+func NormalPkgFileName(pkg *ast.Package) string {
 	if pkg == nil || len(pkg.Files) != 1 {
-		return false
+		return ""
 	}
 
 	for abs := range pkg.Files {
-		if !strings.HasSuffix(abs, ".go") ||
-			!IsNormalName(filepath.Base(abs)) {
-
-			return false
+		abs = filepath.Base(abs)
+		if !strings.HasSuffix(abs, ".go") || !IsNormalName(abs) {
+			break
 		}
+		return abs
 	}
 
-	return true
+	return ""
 }
 
 // Target 创建(覆盖)统一风格的本地文件.
@@ -141,11 +142,11 @@ func (t Target) Create(path, lang, ext string) (file *os.File, err error) {
 	return
 }
 
-// NormalPath 如果 Target 下 path 子目录的所有 ".go" 文件都符合 Docu 命名风格,
-// 返回绝对路径, 否则返回 "".
+// NormalPath 如果 Target 下 path 子目录的扩展名为 ext 文件都符合 Docu 命名风格,
+// 返回绝对路径, 否则返回空字符串.
 // 参数:
 //   path 为 Docu.Parse 返回的 paths 元素.
-func (t Target) NormalPath(path, lang string) string {
+func (t Target) NormalPath(path, lang, ext string) string {
 	if t == "" {
 		return ""
 	}
@@ -165,13 +166,16 @@ func (t Target) NormalPath(path, lang string) string {
 	if err != nil {
 		return ""
 	}
+	if ext != "" && ext[0] != '.' {
+		ext = "." + ext
+	}
 	lang = LangNormal(lang)
 	if lang != "" {
-		lang = "_" + lang + ".go"
+		lang = "_" + lang + ext
 	}
 	find := false
 	for _, name := range names {
-		if !strings.HasSuffix(name, ".go") {
+		if ext != "" && !strings.HasSuffix(name, ext) {
 			continue
 		}
 		// 必须都符合规范

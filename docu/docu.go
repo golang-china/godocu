@@ -5,7 +5,6 @@ package docu
 import (
 	"errors"
 	"go/ast"
-	"go/doc"
 	"go/parser"
 	"go/token"
 	"os"
@@ -61,6 +60,29 @@ func (du *Docu) Package(key string) *ast.Package {
 	return pkg
 }
 
+// NormalLang 返回 key 对应的 *ast.Package 的 lang.
+// 当确定该 pk 符合 Docu 命名风格时使用.
+func (du *Docu) NormalLang(key string) string {
+	pkg := du.Package(key)
+	if pkg == nil || len(pkg.Files) != 1 {
+		return ""
+	}
+
+	for abs := range pkg.Files {
+		base := filepath.Base(abs)
+		pos := strings.IndexByte(base, '_') + 1
+		end := strings.IndexByte(base, '.')
+		if pos == 0 || end <= pos {
+			break
+		}
+		base = base[pos:end]
+		if IsNormalLang(base) {
+			return base
+		}
+	}
+	return ""
+}
+
 // MergePackageFiles 合并 import paths 的包为一个已排序的 ast.File 文件.
 func (du *Docu) MergePackageFiles(paths string) (file *ast.File) {
 	if du == nil {
@@ -70,23 +92,48 @@ func (du *Docu) MergePackageFiles(paths string) (file *ast.File) {
 	if !ok || pkg == nil {
 		return
 	}
-
-	file = ast.MergePackageFiles(pkg,
-		ast.FilterFuncDuplicates|ast.FilterUnassociatedComments|ast.FilterImportDuplicates)
-
-	// 取出 License 放到 file.Comments
-	for _, f := range pkg.Files {
-		for _, comm := range f.Comments {
-			lic := comm.Text()
-			if doc.Synopsis(lic) == "" &&
-				"copyright" == strings.ToLower(strings.SplitN(lic, " ", 2)[0]) {
-				file.Comments = []*ast.CommentGroup{comm}
+	// 单文件优化
+	if len(pkg.Files) == 1 {
+		for _, file = range pkg.Files {
+		}
+	} else {
+		// 抛弃无关的 Comments
+		file = ast.MergePackageFiles(pkg,
+			ast.FilterFuncDuplicates|ast.FilterUnassociatedComments|ast.FilterImportDuplicates)
+		// 取出 License 和 import paths 放到 file.Comments
+		// 通常 License 总第一个
+		var lic, imp *ast.CommentGroup
+		for _, f := range pkg.Files {
+			offset := f.Name.Pos() + token.Pos(len(file.Name.String())) + 1
+			for _, comm := range f.Comments {
+				at := comm.Pos() - offset
+				if at > 0 {
+					break
+				}
+				if lic == nil && at < 0 {
+					text := comm.Text()
+					pos := strings.IndexByte(text, ' ')
+					if pos != -1 && "copyright" == strings.ToLower(text[:pos]) {
+						lic = comm
+						continue
+					}
+				}
+				// 简单加入 import paths, 但不检查有效性
+				if imp == nil && at == 0 && len(comm.List) == 1 && comm.List[0].Slash.IsValid() {
+					file.Package, file.Name = f.Package, f.Name
+					imp = comm
+					break
+				}
+			}
+			if lic != nil && imp != nil {
 				break
 			}
-			lic = ""
 		}
-		if len(file.Comments) != 0 {
-			break
+		if lic != nil {
+			file.Comments = []*ast.CommentGroup{lic}
+		}
+		if imp != nil {
+			file.Comments = append(file.Comments, imp)
 		}
 	}
 
@@ -212,6 +259,12 @@ func (du *Docu) parseFile(abs, name string, src interface{}) (string, error) {
 	importPaths := strings.Replace(abs, `\`, `/`, -1)
 	abs = filepath.Join(abs, name)
 
+	if du.mode&ShowTest == 0 && (strings.HasSuffix(abs, "_test.go") ||
+		filepath.Base(abs) == "test.go") {
+
+		return "", nil
+	}
+
 	pos := strings.LastIndex(importPaths, "/src/")
 	if pos != -1 {
 		importPaths = importPaths[pos+5:]
@@ -223,10 +276,8 @@ func (du *Docu) parseFile(abs, name string, src interface{}) (string, error) {
 	}
 
 	name = astfile.Name.String()
-	if du.mode&ShowCMD == 0 && name == "main" {
-		return "", nil
-	}
-	if du.mode&ShowTest == 0 && (name == "test" || strings.HasSuffix(name, "_test")) {
+	if du.mode&ShowCMD == 0 && name == "main" ||
+		du.mode&ShowTest == 0 && (name == "test" || strings.HasSuffix(name, "_test")) {
 		return "", nil
 	}
 

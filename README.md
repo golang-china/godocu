@@ -4,16 +4,13 @@ godocu 基于 [docu] 实现的指令行工具, 从 Go 源码提取并生成文�
 
 功能:
 
-  - 多字节文档超长换行
-  - 生成 godoc 文本风格文档
-  - 生成 Go 源码风格文档
-  - 可提取执行包文档
-  - 可提取非导出符号文档
-  - 可提取测试包文档
+  - 80 列换行, 支持多字节字符
+  - 内置两种文档风格, Go 源码风格和 godoc 文本风格
+  - 可提取执行包文档, 测试包文档, 非导出符号文档
   - 简单比较包文档的不同之处
   - 遍历目录
-  - 合并不同版本的注释
-  - 自动识别非导出文档
+  - 合并不同版本文档
+  - 若原文档已经符合 80 列换行, 保持不变.
 
 该工具在 Golang 官方包下测试通过, 非官方包请核对输出结果.
 
@@ -105,6 +102,12 @@ source 用于计算 go 源码文件, 可以是绝对路径表示的目录或者�
 
  1. 已存在符合 docu 命名风格的 ".go" 文档, 目标中的非导出声明被保留
  2. 否则按是否使用了 'u' 参数处理.
+
+# Code
+
+指令 `code`, `plain` 输出格式化文档.
+
+方便起见, 当 target 值为 "--", 表示同目录输出, 这有可能是覆盖.
 
 # Diff
 
@@ -314,17 +317,23 @@ source target import_path
 
 merge 指令对两个相同导入路径的包文档进行合并. 细节:
 
- - 只有 source, target 中相同的顶级声明文档会被合并.
- - source 的文档在 target 顶部
- - 如果 target 没有 import, 添加 source 的 import
- - 只有带上 `lang` 参数才会覆盖 target, 否则仅仅打印结果.
+ - source 可以是源码或包文档.
+ - target 必须是包文档, 源码包被忽略.
+ - 依照 target 中的声明过滤 source, 参数 `cmd`,`test`,'u' 失去作用.
+ - 如果 target 没有 import, 添加 source 的 import.
+ - 匹配 source, target 中相同的顶级声明, 合并 source 的文档在 target 前面.
+ - 指定 `lang` 参数才生成或覆盖 target, 否则仅向 stdout 打印结果.
 
 合并 `builtin` 包文档到 golang-china 的翻译项目.
-因 `builtin` 包中的声明都是非导出的, 如果依照前文参数部分要加上 `-u` 才符合真实需求.
-这无疑给
 
 ```shell
-$ godocu merge -u builtin github.com/golang-china/golangdoc.translations/src
+$ godocu merge builtin /path/to/github.com/golang-china/golangdoc.translations/src
+```
+
+遍历所有官方包文档合并到 golang-china 的翻译项目.
+
+```shell
+$ godocu merge ... /path/to/github.com/golang-china/golangdoc.translations/src
 ```
 
 [docu]: https://godoc.org/github.com/golang-china/godocu/docu

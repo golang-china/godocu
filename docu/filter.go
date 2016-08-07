@@ -2,6 +2,7 @@ package docu
 
 import (
 	"go/ast"
+	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -108,7 +109,7 @@ func exportedSpecFilter(spec ast.Spec, by SortDecl) bool {
 	case *ast.TypeSpec:
 		bySpec, _ := by.SearchSpec(n.Name.String()).(*ast.TypeSpec)
 		if !n.Name.IsExported() && nil == bySpec {
-			break
+			return false
 		}
 		var bt *ast.StructType
 		st, _ := n.Type.(*ast.StructType)
@@ -200,12 +201,37 @@ func IsPkgDir(fi os.FileInfo) bool {
 		name != "testdata" && name != "vendor"
 }
 
+// License 返回 file 中以 copyright 开头的注释, 如果有的话.
 func License(file *ast.File) (lic string) {
 	for _, comm := range file.Comments {
 		lic = comm.Text()
 		pos := strings.IndexByte(lic, ' ')
 		if pos != -1 && "copyright" == strings.ToLower(lic[:pos]) {
 			return lic
+		}
+	}
+	return ""
+}
+
+// ImportPaths 返回 file 中的权威导入路径注释, 如果有的话.
+func ImportPaths(file *ast.File) string {
+	offset := file.Name.Pos() + token.Pos(len(file.Name.String())) + 1
+	for _, comm := range file.Comments {
+		at := comm.Pos() - offset
+		if at > 0 {
+			break
+		}
+		if at != 0 {
+			continue
+		}
+		if len(comm.List) != 1 || !comm.List[0].Slash.IsValid() {
+			break
+		}
+		text := strings.TrimSpace(comm.Text())
+		paths := strings.Split(text, " ")
+		if len(paths) == 2 && paths[0] == "import" &&
+			paths[1][0] == '"' && paths[1][len(paths[1])-1] == '"' {
+			return text
 		}
 	}
 	return ""
