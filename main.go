@@ -3,11 +3,14 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"go/ast"
+	"go/doc"
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
@@ -29,6 +32,7 @@ The commands are:
     first   compare the source and target, the first difference output
     code    prints a formatted string to target as Go source code
     plain   prints plain text documentation to target as godoc
+    list    prints godocu style documents list
     merge   merge source doc to target
 
 The source are:
@@ -192,6 +196,8 @@ func main() {
 		err = diffMode(command, mode, ch, source, target)
 	case "merge":
 		err = mergeMode(mode, ch, source, target, lang)
+	case "list":
+		err = listMode(ch, target, lang)
 	default:
 		<-ch
 		ch <- false
@@ -313,6 +319,13 @@ func diffMode(command string, mode docu.Mode, ch chan interface{}, source, targe
 	var ok, diff bool
 	var paths, tpaths []string
 	var du, tu *docu.Docu
+	var offset int
+	if posForImport(target) == -1 {
+		offset = len(target)
+		if target[offset-1] != '/' && target[offset-1] != '\\' {
+			offset++
+		}
+	}
 
 	output := os.Stdout
 	fileDiff := docu.FirstDiff
@@ -338,9 +351,13 @@ func diffMode(command string, mode docu.Mode, ch chan interface{}, source, targe
 			ch <- nil
 			continue
 		}
+		tpath := "packages " + tpaths[0][offset:]
+		for i := 1; i < len(tpaths); i++ {
+			tpath += "," + tpaths[i][offset:]
+		}
 
-		diff, err = docu.TextDiff(output, "packages "+strings.Join(paths, ","),
-			"packages "+strings.Join(tpaths, ","))
+		diff, err = docu.TextDiff(output, "packages "+strings.Join(paths, ","), tpath)
+
 		if err != nil {
 			break
 		}
@@ -351,8 +368,8 @@ func diffMode(command string, mode docu.Mode, ch chan interface{}, source, targe
 			continue
 		}
 
-		for _, key := range paths {
-			diff, err = fileDiff(output, du.MergePackageFiles(key), tu.MergePackageFiles(key))
+		for i, key := range paths {
+			diff, err = fileDiff(output, du.MergePackageFiles(key), tu.MergePackageFiles(tpaths[i]))
 			if diff && err == nil {
 				_, err = io.WriteString(output, "FROM: package ")
 				if err == nil {
@@ -533,6 +550,113 @@ func mergeMode(mode docu.Mode, ch chan interface{}, source, target, lang string)
 			break
 		}
 		ch <- nil
+	}
+	return
+}
+
+type description struct {
+	Repo, Description, Subdir string
+}
+
+func listMode(ch chan interface{}, target, lang string) (err error) {
+	var ok bool
+	var source string
+	var paths []string
+	var du *docu.Docu
+	var list docu.List
+	var filter func(string) bool
+	var bs []byte
+
+	if lang != "" {
+		filter = docu.SuffixFilter("_" + lang + ".go")
+	}
+
+	if target != "" {
+		info, err := os.Stat(target)
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			target = filepath.Join(target, "golist.json")
+		} else if !strings.HasSuffix(info.Name(), ".json") {
+			return errors.New("invalid target")
+		}
+		bs, _ = ioutil.ReadFile(target)
+		// 提取 Description
+		if bs != nil {
+			var desc description
+			if json.Unmarshal(bs, &desc) == nil {
+				list.Repo = desc.Repo
+				list.Description = desc.Description
+				list.Subdir = desc.Subdir
+			}
+		}
+	}
+
+	list.Markdown = true
+	for i := <-ch; i != nil; i = <-ch {
+		if err, ok = i.(error); !ok {
+			du = docu.New(docu.ShowUnexported | docu.ShowCMD | docu.ShowTest)
+			if filter != nil {
+				du.Filter = filter
+			}
+			source = i.(string)
+			paths, err = du.Parse(source, nil)
+		}
+		if err != nil {
+			break
+		}
+		if len(paths) == 0 {
+			ch <- nil
+			continue
+		}
+		// 因为 paths 已经排序, 取第一个就好
+		key := paths[0]
+		if filter == nil {
+			lang = du.NormalLang(key)
+			if lang == "" {
+				err = errors.New("invalid NormalLang in source: " + source)
+				break
+			}
+			filter = docu.SuffixFilter("_" + lang + ".go")
+		}
+		file := du.MergePackageFiles(key)
+		info := docu.Info{
+			Synopsis: doc.Synopsis(file.Doc.Text()),
+			Progress: docu.TranslationProgress(file),
+		}
+		// 非 std 包 import paths 需要重新计算
+		for _, key := range paths {
+			pos := strings.LastIndex(key, "::")
+			if pos == -1 {
+				info.Prefix = "doc"
+				continue
+			}
+			if info.Prefix == "" {
+				info.Prefix = key[pos+2:]
+			} else {
+				info.Prefix = "," + key[pos+2:]
+			}
+		}
+		list.Info = append(list.Info, info)
+		if err != nil {
+			break
+		}
+		ch <- nil
+	}
+	bs, err = json.MarshalIndent(list, "", "    ")
+	if err == nil {
+		if target == "" {
+			_, err = os.Stdout.Write(bs)
+		} else {
+			var output *os.File
+			output, err = os.OpenFile(target, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+			if err == nil {
+				_, err = output.Write(bs)
+				output.Close()
+			}
+		}
+
 	}
 	return
 }

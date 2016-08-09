@@ -37,9 +37,9 @@ func diffOut(form bool, w io.Writer, source, target string) error {
 		target = "none"
 	}
 	if form {
-		return fprint(w, "FORM:\n", LineWrapper(source, prefix, 80), "\nDIFF:\n", LineWrapper(target, prefix, 80), nl)
+		return fprint(w, "FORM:\n", LineWrapper(source, prefix, 80), "DIFF:\n", LineWrapper(target, prefix, 80), nl)
 	}
-	return fprint(w, "TEXT:\n", LineWrapper(source, prefix, 80), "\nDIFF:\n", LineWrapper(target, prefix, 80), nl)
+	return fprint(w, "TEXT:\n", LineWrapper(source, prefix, 80), "DIFF:\n", LineWrapper(target, prefix, 80), nl)
 }
 
 // lineString 对 str 进行单行合并, 剔除空白行

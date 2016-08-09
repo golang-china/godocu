@@ -8,6 +8,13 @@ import (
 	"strings"
 )
 
+// SuffixFilter 返回文件名后缀过滤函数. 例如 SuffixFilter("_zh_CN.go").
+func SuffixFilter(suffix string) func(string) bool {
+	return func(name string) bool {
+		return DefaultFilter(name) && strings.HasSuffix(name, suffix)
+	}
+}
+
 // DefaultFilter 缺省的文件名过滤规则. 过滤掉非 ".go" 和 "_test.go" 结尾的文件
 func DefaultFilter(name string) bool {
 	return ShowTestFilter(name) && !strings.HasSuffix(name, "_test.go")

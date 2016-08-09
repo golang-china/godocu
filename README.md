@@ -7,6 +7,7 @@ godocu 基于 [docu] 实现的指令行工具, 从 Go 源码提取并生成文�
   - 80 列换行, 支持多字节字符
   - 内置两种文档风格, Go 源码风格和 godoc 文本风格
   - 可提取执行包文档, 测试包文档, 非导出符号文档
+  - 文档概要清单
   - 简单比较包文档的不同之处
   - 遍历目录
   - 合并不同版本文档
@@ -33,6 +34,7 @@ The commands are:
     first   compare the source and target, the first difference output
     code    prints a formatted string to target as Go source code
     plain   prints plain text documentation to target as godoc
+    list    prints godocu style documents list
     merge   merge source doc to target
 
 The source are:
@@ -65,10 +67,11 @@ source 用于计算 go 源码文件, 可以是绝对路径表示的目录或者�
 如果是 import path, godocu 会在 GOROOT, GOPATH 中查找并计算出绝对路径.
 
 非独立文件 source 可以后缀 `...` 表示遍历子目录.
+独立的 `...` 表示所有官方包, 即计算后的 `GOROOT/src` 下所有包.
 
 # target
 
-对于 `diff`, `first` 指令, target 是文件或目录, 输出到 Stdout.
+对于 `diff`, `first`, `list` 指令, target 是文件或目录, 输出到 Stdout.
 
 对于 `code`, `plain` , `merge' 指令, target 是生成文档基础路径,
 子路径和文件名由 source 和 `lang` 参数计算得出.
@@ -87,7 +90,7 @@ source 用于计算 go 源码文件, 可以是绝对路径表示的目录或者�
 参数 `lang` 指定输出文件名后缀, 格式为 lang 或 lang_ISOCountryCode.
 即 lang 部分为小写, ISOCountryCode 部分为大写.
 
-方便起见, `docu.LangNormal` 会进行规范化处理.
+辅助函数 `docu.LangNormal` 提供规范化处理.
 
 由于文件名有固定格式, godouc 会通过 target 中已存在的文件名计算得到.
 
@@ -172,7 +175,6 @@ TEXT:
     Use Info.Types[expr].Type for the results of type inference.
 
     For a tutorial, see https://golang.org/s/types-tutorial.
-
 DIFF:
     Package types declares the data types and implements
     the algorithms for type-checking of Go packages. Use
@@ -212,7 +214,6 @@ TEXT:
         "testing"
         "unicode"
     )
-
 DIFF:
     import (
         "bytes"
@@ -247,7 +248,6 @@ TEXT:
     The package is specified by a list of *ast.Files and corresponding
     file set, and the package path the package is identified with.
     The clean path must not be empty or dot (".").
-
 DIFF:
     func (*Config) Check(path string, fset *token.FileSet, files []*ast.File, info *Info)
     (*Package, error)
@@ -266,6 +266,7 @@ TEXT:
     func (*Package) SetName(name string)
 DIFF:
     none
+
 FROM: package go/types
 ```
 
@@ -313,6 +314,40 @@ source target import_path
   none  path  cmd/vet/whitelist
 ```
 
+# List
+
+list 指令以 JSON 格式输出 Godocu 风格文档清单.
+
+source 中 Godocu 风格文档才会出现在清单中.
+
+target:
+
+ - 如果 target 为空, 输出到 Stdout.
+ - 如果 target 为目录, 输出到 target/golist.json
+ - 如果 target 为 ".json" 文件, 输出到该文件
+ - 其它报错
+
+如果未指定参数 `lang` 则取第一个 Godocu 风格的 lang 值.
+
+通常纯粹的文档不应该位于 `GOPATH` 之下, 需要适当的使用 `goroot`,`gopath` 参数.
+
+以 golang-china 的翻译项目为例输出全部包文档清单有三种写法:
+
+```shell
+$ godocu list -goroot=/path/to/github.com/golang-china/golangdoc.translations ...
+$ godocu list /path/to/github.com/golang-china/golangdoc.translations/src...
+$ cd /path/to/github.com/golang-china/golangdoc.translations/src
+$ godocu list ....
+```
+
+ - 第一种写法是把翻译项目目录当做 `goroot`.
+ - 第二种写法则使用绝对路径.
+ - 第三种写法使用了相对路径, 其实是第二种写法的变种.
+
+上例中 golang-china 的翻译项目包含 'src' 子目录, Godocu 可以凭此计算出导入路径.
+对于不含有 'src' 的翻译, Godocu 有可能计算错误, 可以通过预先建立 `golist.json`,
+并设置 `Repo`,`Description`,`Subdir` 属性, 且计算后的本地绝对中必须含有 `/Repo/Subdir/`,  Godocu 凭此计算导入路径.
+
 # Merge
 
 merge 指令对两个相同导入路径的包文档进行合并. 细节:
@@ -335,5 +370,67 @@ $ godocu merge builtin /path/to/github.com/golang-china/golangdoc.translations/s
 ```shell
 $ godocu merge ... /path/to/github.com/golang-china/golangdoc.translations/src
 ```
+
+例子中的 target 含有子目录 "src", 并以它结尾, 这不是必须的.
+
+
+# Example
+
+这里以第三方包 go-github 为例:
+
+ - 源包 https://github.com/google/go-github/github
+ - 翻译 https://github.com/gohub/google
+
+```shell
+$ go get github.com/google/go-github/github
+```
+
+初次翻译时先生成原源码文档, 假设文档基础路径为 $TARGET, github 上已建立翻译空仓库.
+
+```shell
+$ cd $TARGET
+$ godocu code -lang=zh_cn github.com/google/go-github/github .
+```
+
+此时在 $TARGET 目录下生成:
+
+```
+github.com
+└── google
+    └── go-github
+        └── github
+            └── doc_zh_CN.go
+```
+
+显然 godocu 生成的目录结构是带完整导入路径的, 那么接下来的 git 操作为:
+
+```shell
+$ cd $TARGET/github.com/google
+$ git init
+$ git remote add origin git@github.com:gohub/google.git
+```
+
+如果在使用 godocu 之前已经做了翻译, 保持目录结构与完整导入路径对应即可. 比如:
+
+```shell
+$ cd $TARGET
+$ git clone https://github.com/gohub/google ./github.com/google
+```
+
+现实中的目录树为:
+
+```
+github.com
+└── google
+    ├── README.md
+    ├── go-github
+    │   └── github
+    │       └── doc_zh_CN.go
+    └── golist.json
+```
+
+显然子目录树结构在原源码包和翻译文档中必须保持一致.
+
+
 
 [docu]: https://godoc.org/github.com/golang-china/godocu/docu
