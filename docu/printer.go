@@ -56,6 +56,13 @@ func FormatComments(output io.Writer, text, prefix string, limit int) (err error
 		return
 	}
 	if text != "" {
+		_, err = io.WriteString(output, WrapComments(text, prefix, limit))
+	}
+	return
+}
+
+func WrapComments(text, prefix string, limit int) string {
+	if text != "" {
 		var buf bytes.Buffer
 		// 利用 ToText 的 preIndent 功能合并连续行
 		if !IsWrapped(text, limit) {
@@ -64,10 +71,19 @@ func FormatComments(output io.Writer, text, prefix string, limit int) (err error
 		} else {
 			limit = 1 << 32
 		}
-		_, err = io.WriteString(output, LineWrapper(text, prefix, limit))
-
+		text = LineWrapper(text, prefix, limit)
 	}
-	return
+	return text
+}
+
+// SplitComments 分割 MergeDoc 合并后的文档文本为上下两部分.
+func SplitComments(text string) (string, string) {
+	n := strings.Index(text, "___GoDocu_Dividing_line___")
+	if n == -1 {
+		return "", text
+	}
+	return strings.TrimRightFunc(text[:n], unicode.IsSpace),
+		strings.TrimLeftFunc(text[n+26:], unicode.IsSpace)
 }
 
 // UrlPos 识别 text 第一个网址出现的位置.
@@ -300,7 +316,7 @@ func Godoc(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 		text = `    EXECUTABLE PROGRAM IN PACKAGE ` + paths
 	} else if text == "test" || strings.HasSuffix(text, "_test") {
 		text = `    go test ` + paths
-	} else if text = ImportPaths(file); text != "" {
+	} else if text = CanonicalImportPaths(file); text != "" {
 		text = `    ` + text
 	}
 	if text != "" {
@@ -425,7 +441,7 @@ func DocGo(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 		text += " // go get " + paths
 	} else if text == "test" || strings.HasSuffix(text, "_test") {
 		text += " // go test " + paths
-	} else if imp := ImportPaths(file); imp != "" {
+	} else if imp := CanonicalImportPaths(file); imp != "" {
 		text += ` // ` + imp
 	}
 

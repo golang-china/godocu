@@ -28,7 +28,7 @@ const (
 type Docu struct {
 	mode       Mode
 	parserMode parser.Mode
-	*token.FileSet
+	FileSet    *token.FileSet
 	// astpkg 的 key 以 import paths 和包名计算得来.
 	// 如果包名为 "main" 或者 "_test" 结尾, key 为 import paths 附加 "::"+包名.
 	// 否则 key 为 import paths.
@@ -84,11 +84,11 @@ func (du *Docu) NormalLang(key string) string {
 }
 
 // MergePackageFiles 合并 import paths 的包为一个已排序的 ast.File 文件.
-func (du *Docu) MergePackageFiles(paths string) (file *ast.File) {
+func (du *Docu) MergePackageFiles(key string) (file *ast.File) {
 	if du == nil || len(du.astpkg) == 0 {
 		return nil
 	}
-	pkg, ok := du.astpkg[paths]
+	pkg, ok := du.astpkg[key]
 	if !ok || pkg == nil {
 		return
 	}
@@ -154,6 +154,7 @@ func (du *Docu) MergePackageFiles(paths string) (file *ast.File) {
 //   vfs.FileSystem
 //   []byte,string,io.Reader,*bytes.Buffer
 //
+// 返回值 paths 通常等于 import path, 但也可能含有后缀 "::main" 或 "::test"
 func (du *Docu) Parse(path string, source interface{}) (paths []string, err error) {
 	var info []os.FileInfo
 	var fs vfs.FileSystem

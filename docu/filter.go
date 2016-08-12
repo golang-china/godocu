@@ -11,6 +11,9 @@ import (
 
 // SuffixFilter 返回文件名后缀过滤函数. 例如 SuffixFilter("_zh_CN.go").
 func SuffixFilter(suffix string) func(string) bool {
+	if suffix == "_.go" {
+		suffix = ".go"
+	}
 	return func(name string) bool {
 		return DefaultFilter(name) && strings.HasSuffix(name, suffix)
 	}
@@ -32,15 +35,17 @@ func ExportedFileFilter(file *ast.File) bool {
 }
 
 func exportedFileFilter(file *ast.File, by SortDecl) bool {
-	for i := 0; i < len(file.Decls); {
+	max := len(file.Decls)
+	for i := 0; i < max; {
 		if exportedDeclFilter(file.Decls[i], by) {
 			i++
 			continue
 		}
-		copy(file.Decls[i:], file.Decls[i+1:])
-		file.Decls = file.Decls[:len(file.Decls)-1]
+		copy(file.Decls[i:], file.Decls[i+1:max])
+		max--
 	}
-	return len(file.Decls) != 0
+	file.Decls = file.Decls[:max]
+	return max != 0
 }
 
 // ExportedDeclFilter 剔除 non-nil decl 中所有非导出声明, 返回该 decl 是否具有导出声明.
@@ -51,7 +56,6 @@ func ExportedDeclFilter(decl ast.Decl) bool {
 func exportedDeclFilter(decl ast.Decl, by SortDecl) bool {
 	switch decl := decl.(type) {
 	case *ast.FuncDecl:
-		//  写法复杂, 为了效率
 		if decl.Recv != nil && !exportedRecvFilter(decl.Recv, by) {
 			return false
 		}
@@ -279,8 +283,8 @@ func License(file *ast.File) (lic string) {
 	return ""
 }
 
-// ImportPaths 返回 file 中的权威导入路径注释, 如果有的话.
-func ImportPaths(file *ast.File) string {
+// CanonicalImportPaths 返回 file 中的权威导入路径注释, 如果有的话.
+func CanonicalImportPaths(file *ast.File) string {
 	offset := file.Name.Pos() + token.Pos(len(file.Name.String())) + 1
 	for _, comm := range file.Comments {
 		at := comm.Pos() - offset

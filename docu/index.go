@@ -3,6 +3,7 @@ package docu
 import (
 	"go/ast"
 	"go/token"
+	"go/types"
 	"sort"
 )
 
@@ -29,6 +30,9 @@ var numNames = map[int]string{
 
 // NodeNumber 返回值用于节点排序. 随算法更新同类型节点该返回值会变更.
 func NodeNumber(node ast.Node) int {
+	if node == nil {
+		return OtherNum
+	}
 	switch n := node.(type) {
 	case *ast.GenDecl:
 		switch n.Tok {
@@ -82,7 +86,7 @@ func (s SortDecl) Search(identLit string) ast.Decl {
 	if identLit == "" || identLit == "<nil>" {
 		return nil
 	}
-	for _, node := range []ast.Decl(s) {
+	for _, node := range s {
 		switch n := node.(type) {
 		case *ast.GenDecl:
 			for _, spec := range n.Specs {
@@ -110,7 +114,7 @@ func (s SortDecl) SearchFunc(funcIdentLit string) *ast.FuncDecl {
 	if funcIdentLit == "" || funcIdentLit == "<nil>" {
 		return nil
 	}
-	for _, node := range []ast.Decl(s) {
+	for _, node := range s {
 		switch n := node.(type) {
 		case *ast.FuncDecl:
 			lit := FuncIdentLit(n)
@@ -125,12 +129,55 @@ func (s SortDecl) SearchFunc(funcIdentLit string) *ast.FuncDecl {
 	return nil
 }
 
+// SearchConstructor 搜索并返回 typeLit 的构建函数声明:
+// 	*typeLit
+// 	*typeLit, error
+// 	typeLit
+// 	typeLit, error
+func (s SortDecl) SearchConstructor(typeLit string) *ast.FuncDecl {
+	if typeLit == "" || typeLit == "<nil>" {
+		return nil
+	}
+	for _, node := range s {
+		if node == nil {
+			continue
+		}
+		switch n := node.(type) {
+		case *ast.FuncDecl:
+			if isConstructor(n, typeLit) {
+				return n
+			}
+		}
+	}
+	return nil
+}
+
+func isConstructor(n *ast.FuncDecl, typeLit string) bool {
+	if !n.Name.IsExported() || n.Type.Results == nil {
+		return false
+	}
+	list := n.Type.Results.List
+	switch len(list) {
+	case 2:
+		if types.ExprString(list[1].Type) != "error" {
+			break
+		}
+		fallthrough
+	case 1:
+		lit := types.ExprString(list[0].Type)
+		if lit == typeLit || lit[0] == '*' && lit[1:] == typeLit {
+			return true
+		}
+	}
+	return false
+}
+
 // SearchSpec 查找 specIdentLit 对应的 ast.Spec.
 func (s SortDecl) SearchSpec(specIdentLit string) ast.Spec {
 	if specIdentLit == "" || specIdentLit == "<nil>" {
 		return nil
 	}
-	for _, node := range []ast.Decl(s) {
+	for _, node := range s {
 		switch n := node.(type) {
 		case *ast.GenDecl:
 			for _, spec := range n.Specs {
@@ -160,7 +207,7 @@ func (s SortImports) Less(i, j int) bool {
 
 // Index 对 file 顶级声明重新排序. 按照:
 //
-//	Imports, Consts, Vars, Types, Funcs, Types.Funcs
+//	Imports, Consts, Vars, Types, Funcs, Method
 //
 func Index(file *ast.File) {
 	if file != nil {
@@ -168,28 +215,52 @@ func Index(file *ast.File) {
 	}
 }
 
-// IndexNormal 对 file 顶级声明进行 normalize 处理.
-// 该方法拆分或者合并原声明, 获得更好的排序.
+// IndexNormal 对 file 顶级声明进行常规习惯排序, 即:
 //
-// 算法:
-//	所有分组顶级声明按类型重新整理分组, 相同类型分为一组.
-//	分组以及组内列表按字面值进行排序.
+//	Imports, Consts, Vars, Funcs, Types [Constructor,Method]
 //
 func IndexNormal(file *ast.File) {
-	//var dest ast.Decl
-	// 先进行普通排序
-	sort.Sort(SortDecl(file.Decls))
-	// 分组合并
-	decls := file.Decls
-	for _, node := range decls {
-		switch n := node.(type) {
-		case *ast.GenDecl:
-			switch n.Tok {
-			case token.IMPORT:
-			case token.TYPE:
-			case token.CONST, token.VAR:
+	panic("Unimplemented")
+	sort.Sort(sortNormal(file.Decls))
+}
+
+var normalOrder = [...]int{
+	ImportNum,
+	ConstNum,
+	VarNum,
+	FuncNum,
+	TypeNum,
+	MethodNum,
+}
+
+// sortNormal 实现 sort.Interface. 按常规习惯排序.
+type sortNormal []ast.Decl
+
+func (s sortNormal) Len() int      { return len(s) }
+func (s sortNormal) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
+func (s sortNormal) Less(i, j int) bool {
+	in, jn := NodeNumber(s[i]), NodeNumber(s[j])
+	if in == OtherNum || jn == OtherNum ||
+		in != jn && (in <= VarNum || jn <= VarNum) {
+		return in < jn
+	}
+
+	if in != jn && (in == FuncNum || jn == FuncNum) {
+		return normalOrder[in] < normalOrder[jn]
+	}
+	// TypeNum, MethodNum
+	if in == jn {
+		switch in {
+		case TypeNum:
+			si := s[i].(*ast.GenDecl).Specs
+			sj := s[j].(*ast.GenDecl).Specs
+			if len(si) == 0 || len(sj) == 0 {
+				break
 			}
-		case *ast.FuncDecl:
+			return SpecIdentLit(si[0]) < SpecIdentLit(sj[0])
+		case MethodNum:
+			return FuncLit(s[i].(*ast.FuncDecl)) < FuncLit(s[j].(*ast.FuncDecl))
 		}
 	}
+	return false
 }

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -15,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"text/template"
 
 	"github.com/golang-china/godocu/docu"
 )
@@ -34,6 +36,7 @@ The commands are:
     code    prints a formatted string to target as Go source code
     plain   prints plain text documentation to target as godoc
     list    prints godocu style documents list
+    tmpl    prints documentation from template file
     merge   merge source doc to target
 
 The source are:
@@ -54,7 +57,7 @@ func flagUsage() {
 	os.Exit(2)
 }
 
-func flagParse() (mode docu.Mode, command, source, target, lang string) {
+func flagParse() (mode docu.Mode, command, source, target, lang, tmpl string) {
 	var gopath string
 	var u, cmd, test bool
 
@@ -64,6 +67,7 @@ func flagParse() (mode docu.Mode, command, source, target, lang string) {
 	flag.BoolVar(&u, "u", false, "show unexported symbols as well as exported")
 	flag.BoolVar(&cmd, "cmd", false, "show symbols with package docs even if package is a command")
 	flag.BoolVar(&test, "test", false, "show symbols with package docs even if package is a testing")
+	flag.StringVar(&tmpl, "template", "", "template file for tmpl")
 
 	if len(os.Args) < 3 {
 		flagUsage()
@@ -125,7 +129,7 @@ var sp = "\n\n" + strings.Repeat("/", 80) + "\n\n"
 
 func main() {
 	var err error
-	mode, command, source, target, lang := flagParse()
+	mode, command, source, target, lang, tmpl := flagParse()
 	sub := strings.HasSuffix(source, "...")
 	if sub {
 		source = source[:len(source)-3]
@@ -220,9 +224,25 @@ func main() {
 		} else {
 			err = errors.New("invalid path: " + source)
 		}
+	case "tmpl":
+		if tmpl != "" {
+			bs, e := ioutil.ReadFile(tmpl)
+			if e != nil {
+				err = e
+				break
+			}
+			tmpl = string(bs)
+		} else {
+			tmpl = docu.DefaultTemplate
+		}
+		tpl := template.New("Godocu").Funcs(docu.FuncsMap)
+		tpl, err = tpl.Parse(tmpl)
+		if err != nil {
+			<-ch
+			break
+		}
+		err = tmplMode(tpl, mode, ch, target, lang)
 	default:
-		<-ch
-		ch <- false
 		<-ch
 		close(ch)
 		flagUsage()
@@ -232,6 +252,94 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+// 模板
+func tmplMode(tmpl *template.Template, mode docu.Mode, ch chan interface{}, target, lang string) (err error) {
+	var ok bool
+	var source string
+	var paths []string
+	var tu *docu.Docu
+	var output *os.File
+	fs := docu.Target(target)
+	var buf bytes.Buffer
+
+	// 先不要过滤
+	showUn := mode&docu.ShowUnexported != 0
+	mode |= docu.ShowUnexported
+	filter := docu.SuffixFilter("_" + lang + ".go")
+	out := false
+	du := docu.NewData()
+	for i := <-ch; i != nil; i = <-ch {
+		if err, ok = i.(error); !ok {
+			source = i.(string)
+			du.Docu = docu.New(mode)
+			paths, err = du.Parse(source, nil)
+		}
+		if err != nil {
+			break
+		}
+		if len(paths) == 0 {
+			ch <- nil
+			continue
+		}
+
+		for i, key := range paths {
+			if i == 0 && target != "" {
+				if path := fs.NormalPath(key, lang, ".go"); path != "" {
+					// 载入全部目标包
+					tu = docu.New(mode)
+					tu.Filter = filter
+					_, err = tu.Parse(path, nil)
+					// 有可能老文件有错误
+					if err != nil {
+						err = nil
+					}
+				}
+			}
+			// 以目标过滤源, 否则无 showUnexported 时进行过滤.
+			norfile := tu.MergePackageFiles(key)
+			if norfile != nil && tu.NormalLang(key) == lang {
+				du.SetFilter(docu.SortDecl(norfile.Decls).Filter)
+			} else if !showUn {
+				du.SetFilter(docu.ExportedFileFilter)
+			} else {
+				du.SetFilter(nil)
+			}
+
+			buf.Truncate(0)
+			du.Key = key
+			err = tmpl.Execute(&buf, du)
+			if err != nil {
+				break
+			}
+			if du.Ext == "" {
+				continue
+			}
+			if out && target == "" {
+				_, err = os.Stdout.WriteString(sp)
+			}
+			output, err = fs.Create(key, lang, du.Ext)
+
+			if err != nil {
+				break
+			}
+			_, err = output.Write(buf.Bytes())
+			out = true
+			if target != "" {
+				output.Close()
+			}
+
+			if err != nil {
+				break
+			}
+		}
+		if err != nil {
+			break
+		}
+		ch <- nil
+	}
+	return
 }
 
 // walkPath 通道类型约定:
@@ -654,6 +762,10 @@ func listMode(ch chan interface{}, pos int, target, lang string) (err error) {
 			return
 		}
 		if len(paths) == 0 {
+			// 简单预测官方包
+			if list.Repo == "" && filepath.Base(source) == "archive" {
+				list.Repo = "github.com/golang/go"
+			}
 			ch <- nil
 			continue
 		}
@@ -703,7 +815,7 @@ func listMode(ch chan interface{}, pos int, target, lang string) (err error) {
 				imp = imp[:pos]
 			}
 			if list.Repo == "" && strings.IndexByte(imp, '.') == -1 {
-				list.Repo = "github.com/golang/go"
+				list.Repo = "localhost"
 			} else if list.Repo == "" {
 				for _, wh := range docu.Warehouse {
 					if !strings.HasPrefix(info.Import, wh.Host) || info.Import[len(wh.Host)] != '/' {
