@@ -5,6 +5,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -99,7 +100,14 @@ func exportedSpecFilter(spec ast.Spec, by SortDecl) bool {
 		return true
 	case *ast.ValueSpec:
 		for i := 0; i < len(n.Names); {
-			if n.Names[i].IsExported() {
+			// 特别情况:
+			//	const (
+			//		_ Mode = iota
+			//		ModeARM
+			//		ModeThumb
+			//	)
+			if n.Names[i].IsExported() ||
+				i == 0 && n.Type != nil && len(n.Names) == 1 && n.Names[0].Name == "_" {
 				i++
 				continue
 			}
@@ -176,12 +184,12 @@ func hasField(n *ast.StructType, name string) bool {
 }
 
 // WalkPath 可遍历 paths 及其子目录或者独立的文件.
-// 若 paths 是包路径或绝对路径, 调用 walk 遍历 paths.
-func WalkPath(paths string, walk filepath.WalkFunc) error {
+// 若 paths 是包路径或绝对路径, 调用 walkFn 遍历 paths.
+func WalkPath(paths string, walkFn filepath.WalkFunc) error {
 	root := Abs(paths)
-	info, err := os.Stat(root)
+	info, err := os.Lstat(root)
 	if err != nil || !info.IsDir() {
-		return walk(root, info, err)
+		return walkFn(root, info, err)
 	}
 
 	return filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
@@ -195,10 +203,61 @@ func WalkPath(paths string, walk filepath.WalkFunc) error {
 			}
 		}
 		if err != nil || ispkg {
-			return walk(path, info, err)
+			return walkFn(path, info, err)
 		}
 		return nil
 	})
+}
+
+func walkPath(path string, info os.FileInfo, walkFn filepath.WalkFunc) error {
+	err := walkFn(path, info, nil)
+	if err != nil {
+		if info.IsDir() && err == filepath.SkipDir {
+			return nil
+		}
+		return err
+	}
+
+	if !info.IsDir() {
+		return nil
+	}
+
+	names, err := readDirNames(path)
+	if err != nil {
+		return walkFn(path, info, err)
+	}
+
+	for _, name := range names {
+		filename := filepath.Join(path, name)
+		fileInfo, err := os.Lstat(filename)
+		if err != nil {
+			if err := walkFn(filename, fileInfo, err); err != nil && err != filepath.SkipDir {
+				return err
+			}
+		} else {
+			err = walkPath(filename, fileInfo, walkFn)
+			if err != nil {
+				if !fileInfo.IsDir() || err != filepath.SkipDir {
+					return err
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func readDirNames(dirname string) ([]string, error) {
+	f, err := os.Open(dirname)
+	if err != nil {
+		return nil, err
+	}
+	names, err := f.Readdirnames(-1)
+	f.Close()
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 func IsPkgDir(fi os.FileInfo) bool {

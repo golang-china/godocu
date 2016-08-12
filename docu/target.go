@@ -93,6 +93,55 @@ func NormalPkgFileName(pkg *ast.Package) string {
 	return ""
 }
 
+// LookReadme 在 path 下搜寻 readme 文件名. 未找到返回空串.
+func LookReadme(path string) string {
+	names, err := readDirNames(path)
+	if err != nil {
+		return ""
+	}
+
+	for _, name := range names {
+		if !strings.HasSuffix(name, ".go") &&
+			strings.HasPrefix(strings.ToLower(name), "readme") {
+			info, err := os.Lstat(filepath.Join(path, name))
+			if err != nil && !info.IsDir() {
+				return name
+			}
+		}
+	}
+	return ""
+}
+
+// LookImportPath 返回绝对目录路径 abs 中的 import paths 值. 未找到返回 ""
+func LookImportPath(abs string) string {
+	if abs == "" {
+		return ""
+	}
+	if abs[len(abs)-1] == os.PathSeparator {
+		abs = abs[:len(abs)-1]
+	}
+
+	if strings.HasSuffix(abs, SrcElem[:4]) {
+		return ""
+	}
+
+	pos := strings.Index(abs, SrcElem)
+	if pos != -1 {
+		return filepath.ToSlash(abs[pos+5:])
+	}
+	for _, wh := range Warehouse {
+		pos = strings.Index(abs, wh.Host)
+		if pos == -1 {
+			continue
+		}
+		if abs[pos-1] == os.PathSeparator && abs[pos+len(wh.Host)] == os.PathSeparator {
+			return filepath.ToSlash(abs[pos:])
+		}
+	}
+
+	return ""
+}
+
 // Target 创建(覆盖)统一风格的本地文件.
 type Target string
 

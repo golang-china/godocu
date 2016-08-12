@@ -1,19 +1,32 @@
 # GoDocu
 
-godocu 基于 [docu] 实现的指令行工具, 从 Go 源码提取并生成文档.
+Godocu 基于 [docu] 实现的指令行工具, 从 Go 源码提取并生成文档.
 
 功能:
 
   - 80 列换行, 支持多字节字符
+  - 若原注释已经符合 80 列换行, 保持不变.
   - 内置两种文档风格, Go 源码风格和 godoc 文本风格
   - 可提取执行包文档, 测试包文档, 非导出符号文档
-  - 文档概要清单
-  - 简单比较包文档的不同之处
   - 遍历目录
+  - 生成文档概要清单
   - 合并不同版本文档
-  - 若原文档已经符合 80 列换行, 保持不变.
+  - 简单比较包文档的不同之处
 
 该工具在 Golang 官方包下测试通过, 非官方包请核对输出结果.
+
+命名风格:
+
+Godocu 生成的文档文件名由包名称和 `lang` 参数计算得出, 格式为 `prefix_lang.ext`.
+
+前缀由包名称计算得到 `doc`, `main` 或 `test`.
+
+如果参数 `lang` 非空, 添加后缀 `_lang`.
+
+扩展名
+
+ - `code`,`merge` 指令输出扩展名为 ".go".
+ - `plain` 指令扩展名为 ".text".
 
 # Install
 
@@ -32,6 +45,7 @@ The commands are:
 
     diff    compare the source and target, all difference output
     first   compare the source and target, the first difference output
+    tree    compare different directory structure of the source and target
     code    prints a formatted string to target as Go source code
     plain   prints plain text documentation to target as godoc
     list    prints godocu style documents list
@@ -51,9 +65,9 @@ The arguments are:
   -cmd
       show symbols with package docs even if package is a command
   -gopath string
-      specifies gopath (default "/Users/achun/Workspace/gowork")
+      specifies gopath (default $GOPATH)
   -goroot string
-      Go root directory (default "/usr/local/Cellar/go/1.6/libexec")
+      Go root directory (default $GOROOT)
   -lang string
       the lang pattern for the output file, form like en or zh_CN
   -test
@@ -63,27 +77,32 @@ The arguments are:
 
 # source
 
-source 用于计算 go 源码文件, 可以是绝对路径表示的目录或者文件.
-如果是 import path, godocu 会在 GOROOT, GOPATH 中查找并计算出绝对路径.
+source 用于计算 go 源码文件路径, 可以是 import path 或绝对路径表示的目录或文件.
+如果是 import path, Godocu 会在 `GOROOT/src`, `GOPATH/src` 下查找并计算出绝对路径.
 
-非独立文件 source 可以后缀 `...` 表示遍历子目录.
-独立的 `...` 表示所有官方包, 即计算后的 `GOROOT/src` 下所有包.
+非文件 source 可以后缀 `...` 表示遍历子目录.
+若 source 为 `...` 表示所有官方包, 即遍历 `GOROOT/src` 下的所有包.
+
+多数指令中 source 用来计算 import path, 这要求计算后的绝对路径要包含 "/src/".
+
+详情参见相关指令以及 `Example` 段.
 
 # target
 
-对于 `diff`, `first`, `list` 指令, target 是文件或目录, 输出到 Stdout.
+target 在 `diff`,`first`,`tree`,`code`,`plain`,`merge` 指令中表示绝对的基本路径.
+拼接 source 中计算出的 import path 后得到目标绝对路径.
 
-对于 `code`, `plain` , `merge' 指令, target 是生成文档基础路径,
-子路径和文件名由 source 和 `lang` 参数计算得出.
+这意味着某个包的目录结构在 source 和 target 中是相同的.
 
-文件名前缀由包名称计算得到 `doc`, `main` 或 `test`.
+对于 `diff`, `first`, `tree` 指令, target 必选, 表示对比目标, 输出到 Stdout.
 
-如果参数 `lang` 非空, 添加后缀 `_{lang}`. 这是 docu 的命名风格.
+对于 `merge' 指令, target 必选, 表示目标文档.
 
-扩展名
+对于 `code`, `plain` 指令, target 可选, 表示结果目标, 缺省输出到 Stdout.
 
- - `code`,`merge` 指令输出扩展名为 ".go".
- - `plain` 指令扩展名为 ".text".
+对于 `list` 指令 target 有独立含义.
+
+详情参见相关指令以及 `Example` 段.
 
 # lang
 
@@ -92,14 +111,17 @@ source 用于计算 go 源码文件, 可以是绝对路径表示的目录或者�
 
 辅助函数 `docu.LangNormal` 提供规范化处理.
 
-由于文件名有固定格式, godouc 会通过 target 中已存在的文件名计算得到.
+某些情况下即便未指定参数 `lang`, godouc 会通过 target 中现存的文件名计算得到.
 
-如果 `lang` 非空, 新建或覆盖计算后的目标文件.
-如果 `lang` 为空, 且目标文件符合 docu 命名风格, 目标文件被覆盖.
+详情参见相关指令.
+
+# cmd
+
+参数 'cmd' 允许操作 `main` 包顶级导出声明.
 
 # unexported
 
-参数 'u' 允许输出非导出顶级声明, 现实中有这样的需求. 比如 `builtin` 包的声明都是非导出的, 但其文档在 Go 文档中是不可或缺的.
+参数 'u' 允许操作顶级非导出声明, 现实中有这样的需求. 比如 `builtin` 包的声明都是非导出的, 但其文档在 Go 文档中是不可或缺的.
 
 也许某个文档仅需要包含特别的非导出声明, Godocu 的非导出优先策略是:
 
@@ -110,13 +132,74 @@ source 用于计算 go 源码文件, 可以是绝对路径表示的目录或者�
 
 指令 `code`, `plain` 输出格式化文档.
 
-方便起见, 当 target 值为 "--", 表示同目录输出, 这有可能是覆盖.
+方便起见, 当 target 值为 "--", 表示输出到原包目录.
+
+如果指定了 target 要求参数 `lang` 非空.
+
+# Tree
+
+指令 `tree` 遍历比较并输出 sourec, target 目录结构的不同.
+
+遍历目录时 Godocu 参照 Go 命名习惯, 忽略 `testdata`, `vendor` 之类的目录.
+
+遍历比较当前版本 1.6.2 和老版本的差异
+
+```shell
+$ godocu tree ... /usr/local/Cellar/go/1.5.2/libexec/src
+```
+
+输出:
+
+```
+source: /usr/local/Cellar/go/1.6.2/libexec/src
+target: /usr/local/Cellar/go/1.5.2/libexec/src
+
+source target path
+  path  none  cmd/compile/internal/mips64
+  path  none  cmd/internal/obj/mips
+  path  none  cmd/internal/unvendor
+  path  none  cmd/internal/unvendor/golang.org
+  path  none  cmd/internal/unvendor/golang.org/x
+  path  none  cmd/internal/unvendor/golang.org/x/arch
+  path  none  cmd/internal/unvendor/golang.org/x/arch/arm
+  path  none  cmd/internal/unvendor/golang.org/x/arch/arm/armasm
+  path  none  cmd/internal/unvendor/golang.org/x/arch/x86
+  path  none  cmd/internal/unvendor/golang.org/x/arch/x86/x86asm
+  path  none  cmd/link/internal/mips64
+  path  none  cmd/vet/internal
+  path  none  cmd/vet/internal/whitelist
+  path  none  internal/golang.org
+  path  none  internal/golang.org/x
+  path  none  internal/golang.org/x/net
+  path  none  internal/golang.org/x/net/http2
+  path  none  internal/golang.org/x/net/http2/hpack
+  path  none  internal/race
+  path  none  internal/syscall/windows/sysdll
+  path  none  runtime/internal
+  path  none  runtime/internal/atomic
+  path  none  runtime/internal/sys
+  path  none  runtime/msan
+  none  path  cmd/internal/rsc.io
+  none  path  cmd/internal/rsc.io/arm
+  none  path  cmd/internal/rsc.io/arm/armasm
+  none  path  cmd/internal/rsc.io/x86
+  none  path  cmd/internal/rsc.io/x86/x86asm
+  none  path  cmd/vet/whitelist
+  none  path  internal/format
+```
+
+对比 "cmd" 目录的变化使用:
+
+```shell
+$ godocu tree cmd /usr/local/Cellar/go/1.5.2/libexec/src
+```
+
 
 # Diff
 
-指令 `first` 比较两个包, 输出首个差异信息, 而 `diff` 输出全部差异信息.
+指令 `diff` 比较 source, target 共有的包并输出差异信息, 而 `first` 仅输出首个差异信息.
 
-要求由 source,target 计算出的绝对路径必须包含 "/src/".
+要求由 source 计算出的绝对路径必须包含 "/src/".
 
 比较 reflect 在当前版本 1.6.2 和老版本的差异
 
@@ -131,6 +214,7 @@ TEXT:
     func DeepEqual(x, y interface{}) bool
 DIFF:
     func DeepEqual(a1, a2 interface{}) bool
+
 FROM: package reflect
 ```
 
@@ -141,6 +225,7 @@ FROM: package reflect
     func DeepEqual(x, y interface{}) bool
 不同:
     func DeepEqual(a1, a2 interface{}) bool
+
 来自: package reflect
 ```
 
@@ -278,42 +363,6 @@ go 1.6.2 的 Doc 注释多了一行
 
 如果看到的不是 `TEXT:` 而是 `FORM:` 表示折叠为一行后值相同, 即格式发生变化,
 
-遍历比较 "cmd" 及其子目录
-
-```shell
-$ godocu diff cmd... /usr/local/Cellar/go/1.5.2/libexec/src/
-```
-
-因目录结构不同, 不进行文档对比.
-
-输出:
-
-```
-source: /usr/local/Cellar/go/1.6.2/libexec/src/cmd
-target: /usr/local/Cellar/go/1.5.2/libexec/src/
-
-source target import_path
-  path  none  cmd/compile/internal/mips64
-  path  none  cmd/internal/obj/mips
-  path  none  cmd/internal/unvendor
-  path  none  cmd/internal/unvendor/golang.org
-  path  none  cmd/internal/unvendor/golang.org/x
-  path  none  cmd/internal/unvendor/golang.org/x/arch
-  path  none  cmd/internal/unvendor/golang.org/x/arch/arm
-  path  none  cmd/internal/unvendor/golang.org/x/arch/arm/armasm
-  path  none  cmd/internal/unvendor/golang.org/x/arch/x86
-  path  none  cmd/internal/unvendor/golang.org/x/arch/x86/x86asm
-  path  none  cmd/link/internal/mips64
-  path  none  cmd/vet/internal
-  path  none  cmd/vet/internal/whitelist
-  none  path  cmd/internal/rsc.io
-  none  path  cmd/internal/rsc.io/arm
-  none  path  cmd/internal/rsc.io/arm/armasm
-  none  path  cmd/internal/rsc.io/x86
-  none  path  cmd/internal/rsc.io/x86/x86asm
-  none  path  cmd/vet/whitelist
-```
-
 # List
 
 list 指令以 JSON 格式输出 Godocu 风格文档清单.
@@ -329,9 +378,43 @@ target:
 
 如果未指定参数 `lang` 则取第一个 Godocu 风格的 lang 值.
 
-通常纯粹的文档不应该位于 `GOPATH` 之下, 需要适当的使用 `goroot`,`gopath` 参数.
+相关输出结构
 
-以 golang-china 的翻译项目为例输出全部包文档清单有三种写法:
+```go
+// List 表示在同一个 repo 下全部包文档信息
+type List struct {
+  Repo        string // 托管 git 仓库地址.
+  Description string // 一句话介绍 Repo 或列表
+  Subdir      string // 文档所在 repo 下的子目录
+  Lang        string // 同一个列表具有相同的 Lang
+  Markdown    bool   // 是否具有完整的 Markdown 文档
+  Info        []Info
+}
+
+// Info 表示单个包文档信息.
+type Info struct {
+  Import   string // 导入路径
+  Synopsis string // 一句话包摘要
+  Progress int    // 翻译完成度
+  Prefix   string // 例如 "doc" 或 "doc,main,test"
+}
+```
+
+通常纯粹的文档不应该位于 `GOPATH` 之下, 而 list 需要正确计算出每个包的导入路径,
+即 Info.Import 属性. list  按以下优先级进行导入路径处理:
+
+ - 如果 golist.json 已经存在, 以其中的 Repo, Subdir 值与本地绝对路径进行计算
+ - 如果本地绝对路径含 "src" 目录, "src" 后面的就是导入路径
+ - 在绝对路径中搜索常见的仓库托管服务域名计算导入路径
+ - 生成空值的 golist.json 提示使用者手工设置 Repo, Subdir
+
+上例中 golang-china 的翻译项目包含 'src' 子目录, Godocu 可以凭此计算出导入路径.
+对于不含有 'src' 的翻译, Godocu 有可能计算错误, 可以通过预先建立 `golist.json`,
+并设置 `Repo`,`Description`,`Subdir` 属性, Godocu 凭此计算其它参数.
+
+Example 段有详细的例子演示如何配套使用.
+
+以 golang-china 的翻译项目为例输出全部包文档清单到  Stdout 有三种用法:
 
 ```shell
 $ godocu list -goroot=/path/to/github.com/golang-china/golangdoc.translations ...
@@ -340,13 +423,39 @@ $ cd /path/to/github.com/golang-china/golangdoc.translations/src
 $ godocu list ....
 ```
 
- - 第一种写法是把翻译项目目录当做 `goroot`.
- - 第二种写法则使用绝对路径.
- - 第三种写法使用了相对路径, 其实是第二种写法的变种.
+ - 第一种把翻译项目目录当做 `goroot`.
+ - 第二种使用了绝对路径, 注意带上 "/src".
+ - 第三种使用了当前路径, 是第二种写法的变种.
 
-上例中 golang-china 的翻译项目包含 'src' 子目录, Godocu 可以凭此计算出导入路径.
-对于不含有 'src' 的翻译, Godocu 有可能计算错误, 可以通过预先建立 `golist.json`,
-并设置 `Repo`,`Description`,`Subdir` 属性, 且计算后的本地绝对中必须含有 `/Repo/Subdir/`,  Godocu 凭此计算导入路径.
+输出:
+
+```json
+{
+    "Repo": "",
+    "Description": "",
+    "Subdir": "",
+    "Lang": "",
+    "Markdown": true,
+    "Info": [
+        {
+            "Import": "",
+            "Synopsis": "tar包实现了tar格式压缩文件的存取.",
+            "Progress": 100,
+            "Prefix": "doc"
+        },
+        {
+            "Import": "",
+            "Synopsis": "zip包提供了zip档案文件的读写服务.",
+            "Progress": 95,
+            "Prefix": "doc"
+        },
+        // .....
+    ],
+}
+```
+
+
+目录关系详见 `Example` 段.
 
 # Merge
 
@@ -402,7 +511,7 @@ github.com
             └── doc_zh_CN.go
 ```
 
-显然 godocu 生成的目录结构是带完整导入路径的, 那么接下来的 git 操作为:
+显然 Godocu 生成的目录结构是带完整导入路径的, 那么接下来的 git 操作为:
 
 ```shell
 $ cd $TARGET/github.com/google
@@ -410,7 +519,7 @@ $ git init
 $ git remote add origin git@github.com:gohub/google.git
 ```
 
-如果在使用 godocu 之前已经做了翻译, 保持目录结构与完整导入路径对应即可. 比如:
+如果在使用 Godocu 之前已经做了翻译, 保持目录结构与完整导入路径对应即可. 比如:
 
 ```shell
 $ cd $TARGET
@@ -430,7 +539,5 @@ github.com
 ```
 
 显然子目录树结构在原源码包和翻译文档中必须保持一致.
-
-
 
 [docu]: https://godoc.org/github.com/golang-china/godocu/docu

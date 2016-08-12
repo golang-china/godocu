@@ -30,6 +30,7 @@ The commands are:
 
     diff    compare the source and target, all difference output
     first   compare the source and target, the first difference output
+    tree    compare different directory structure of the source and target
     code    prints a formatted string to target as Go source code
     plain   prints plain text documentation to target as godoc
     list    prints godocu style documents list
@@ -128,25 +129,47 @@ func main() {
 	sub := strings.HasSuffix(source, "...")
 	if sub {
 		source = source[:len(source)-3]
-		if source == "" {
-			source = docu.GOROOT + docu.SrcElem
+	}
+	if source == "" {
+		source = docu.GOROOT + docu.SrcElem[:4]
+	} else {
+		source = docu.Abs(source)
+	}
+
+	_, err = os.Stat(source)
+
+	if target == "" {
+		if command == "first" || command == "diff" || command == "merge" ||
+			command == "tree" {
+			command = "help"
+		}
+	} else if err == nil {
+		if target == "--" {
+			target = source
+		} else {
+			target = docu.Abs(target)
+			_, err = os.Stat(target)
 		}
 	}
 
-	if target == "" &&
-		(command == "first" || command == "diff" || command == "merge") {
+	if err != nil {
 		command = "help"
 	}
-	source = docu.Abs(source)
+
+	if command == "tree" {
+		sub = true
+	}
+
 	ch := make(chan interface{})
 	go walkPath(ch, sub, source)
+
 	switch command {
 	case "code", "plain":
 		if target == "--" {
 			pos := posForImport(source)
 			if pos == -1 {
 				<-ch
-				err = errors.New("invalid source: " + source)
+				err = errors.New("invalid path: " + source)
 				break
 			}
 			if pos < len(source) {
@@ -155,49 +178,48 @@ func main() {
 				target = source
 			}
 		}
-		err = showMode(command, mode, ch, target, lang)
-	case "first", "diff":
-		target = docu.Abs(target)
-		// 如果目录结构不同, 不进行文档对比
-		if sub {
-			var d1, d2 bool
-			var spath, tpath string
-
-			prefix := fmt.Sprintf("source: %s\ntarget: %s\n\nsource target import_path\n",
-				source, target)
-
-			d1, err = diffTree(prefix, "  path  none ", "  path  file ", mode, ch, source, target)
-			if err != nil {
-				break
-			}
-			close(ch)
-
-			// 交换 source,target
-			pos := posForImport(source)
-			if pos < len(source) {
-				spath, tpath = filepath.Join(target, source[pos:]), source[:pos]
-			} else {
-				spath, tpath = target, source
-			}
-
-			if d1 {
-				prefix = ""
-			}
-			ch = make(chan interface{})
-			go walkPath(ch, sub, spath)
-			d2, err = diffTree(prefix, "  none  path ", "  file  path ", mode, ch, spath, tpath)
-			if err != nil || d1 || d2 {
-				break
-			}
-
-			ch = make(chan interface{})
-			go walkPath(ch, sub, source)
+		if lang == "" && target != "" {
+			err = errors.New("missing lang argument for output")
+		} else {
+			err = showMode(command, mode, ch, target, lang)
 		}
+	case "tree":
+		// 对比目录结构
+		var d1 bool
+
+		prefix := fmt.Sprintf("source: %s\ntarget: %s\n\nsource target path\n",
+			source, target)
+
+		d1, err = treeMode(prefix, "  path  none ", "  path  file ", mode, ch, source, target)
+		if err != nil {
+			break
+		}
+		close(ch)
+
+		if d1 {
+			prefix = ""
+		}
+
+		pos := posForImport(source)
+		if len(source) > pos {
+			target = filepath.Join(target, source[pos:])
+			source = source[:pos]
+		}
+
+		ch = make(chan interface{})
+		go walkPath(ch, sub, target)
+		_, err = treeMode(prefix, "  none  path ", "  file  path ", mode, ch, target, source)
+	case "first", "diff":
 		err = diffMode(command, mode, ch, source, target)
 	case "merge":
 		err = mergeMode(mode, ch, source, target, lang)
 	case "list":
-		err = listMode(ch, target, lang)
+		pos := posForImport(source)
+		if pos != -1 {
+			err = listMode(ch, pos, target, lang)
+		} else {
+			err = errors.New("invalid path: " + source)
+		}
 	default:
 		<-ch
 		ch <- false
@@ -205,6 +227,7 @@ func main() {
 		close(ch)
 		flagUsage()
 	}
+
 	close(ch)
 	if err != nil {
 		log.Fatal(err)
@@ -255,6 +278,8 @@ func showMode(command string, mode docu.Mode, ch chan interface{}, target, lang 
 	showUn := mode&docu.ShowUnexported != 0
 	mode |= docu.ShowUnexported
 
+	filter := docu.SuffixFilter("_" + lang + ".go")
+
 	out := false
 	for i := <-ch; i != nil; i = <-ch {
 		if err, ok = i.(error); !ok {
@@ -268,29 +293,28 @@ func showMode(command string, mode docu.Mode, ch chan interface{}, target, lang 
 
 		for i, key := range paths {
 			file := du.MergePackageFiles(key)
-			lan := lang
 			if i == 0 && target != "" {
 				if path := fs.NormalPath(key, lang, ext); path != "" {
-					// 载入全部包
+					// 载入全部目标包
 					tu = docu.New(mode)
+					tu.Filter = filter
 					_, err = tu.Parse(path, nil)
+					// 有可能老文件有错误
 					if err != nil {
-						break
+						err = nil
 					}
 				}
 			}
 
-			// 有目标, 以目标过滤源, 否则无 showUnexported 时进行过滤.
+			// 以目标过滤源, 否则无 showUnexported 时进行过滤.
 			norfile := tu.MergePackageFiles(key)
-			if norfile != nil {
+			if norfile != nil && tu.NormalLang(key) == lang {
 				docu.SortDecl(norfile.Decls).Filter(file)
-				lan = tu.NormalLang(key) // 提取目标语言作为文件名参数
 			} else if !showUn {
 				docu.ExportedFileFilter(file)
 			}
 
-			output, err = fs.Create(key, lan, ext)
-			lang = lan
+			output, err = fs.Create(key, lang, ext)
 
 			if err == nil && out && target == "" {
 				_, err = os.Stdout.WriteString(sp)
@@ -319,12 +343,12 @@ func diffMode(command string, mode docu.Mode, ch chan interface{}, source, targe
 	var ok, diff bool
 	var paths, tpaths []string
 	var du, tu *docu.Docu
-	var offset int
-	if posForImport(target) == -1 {
-		offset = len(target)
-		if target[offset-1] != '/' && target[offset-1] != '\\' {
-			offset++
-		}
+
+	pos := posForImport(source)
+	if pos == -1 {
+		<-ch
+		err = errors.New("invalid path: " + source)
+		return
 	}
 
 	output := os.Stdout
@@ -335,25 +359,27 @@ func diffMode(command string, mode docu.Mode, ch chan interface{}, source, targe
 	for i := <-ch; i != nil; i = <-ch {
 		if err, ok = i.(error); !ok {
 			du = docu.New(mode)
-			paths, err = du.Parse(i.(string), nil)
+			source = i.(string)
+			paths, err = du.Parse(source, nil)
 		}
 		if err != nil {
 			break
 		}
-		// 必须两个都有相同的包才进行对比.
-		// source 不能有错, 因已经进行了 diffTree 比较, target 的错误被忽略.
-		tu = docu.New(mode)
-		tpaths, err = tu.Parse( // 处理多包
-			filepath.Join(target, strings.Split(paths[0], "::")[0]), nil)
 
-		if len(paths) == 0 || len(tpaths) == 0 {
+		// 只对比相同的包. source 不能有错, target 的错误被忽略.
+		if len(paths) != 0 {
+			tu = docu.New(mode)
+			tpaths, err = tu.Parse(filepath.Join(target, source[pos:]), nil)
+		}
+
+		if len(paths) == 0 || len(tpaths) == 0 || err != nil {
 			err = nil
 			ch <- nil
 			continue
 		}
-		tpath := "packages " + tpaths[0][offset:]
+		tpath := "packages " + tpaths[0]
 		for i := 1; i < len(tpaths); i++ {
-			tpath += "," + tpaths[i][offset:]
+			tpath += "," + tpaths[i]
 		}
 
 		diff, err = docu.TextDiff(output, "packages "+strings.Join(paths, ","), tpath)
@@ -392,21 +418,35 @@ func diffMode(command string, mode docu.Mode, ch chan interface{}, source, targe
 	return
 }
 
+// posForImport 计算 import paths 开始的偏移量
 func posForImport(s string) (pos int) {
+	if strings.HasSuffix(s, docu.SrcElem[:4]) {
+		return len(s) + 1
+	}
+
 	pos = strings.Index(s, docu.SrcElem)
 	if pos != -1 {
 		pos += len(docu.SrcElem)
-	} else if strings.HasSuffix(s, docu.SrcElem[:len(docu.SrcElem)-1]) {
-		pos = len(s) + 1
+		return
 	}
-	return
+	for _, wh := range docu.Warehouse {
+		pos = strings.Index(s, wh.Host)
+		if pos == -1 {
+			continue
+		}
+		if s[pos-1] == os.PathSeparator && s[pos+len(wh.Host)] == os.PathSeparator {
+			return pos
+		}
+	}
+
+	return -1
 }
 
-// diffTree 比较目录结构是否相同
-func diffTree(prefix, prenone, prefile string, mode docu.Mode, ch chan interface{}, source, target string) (diff bool, err error) {
+func treeMode(prefix, prenone, prefile string, mode docu.Mode, ch chan interface{}, source, target string) (diff bool, err error) {
 	var fi os.FileInfo
 	pos := posForImport(source)
 	if pos == -1 {
+		<-ch
 		err = errors.New("invalid path: " + source)
 		return
 	}
@@ -418,7 +458,8 @@ func diffTree(prefix, prenone, prefile string, mode docu.Mode, ch chan interface
 		}
 
 		source = i.(string)
-		source = source[pos:] // 计算 import path
+		source = source[pos:]
+
 		fi, err = os.Stat(filepath.Join(target, source))
 		if os.IsNotExist(err) {
 			_, err = fmt.Fprintln(output, prefix+prenone, source)
@@ -447,11 +488,10 @@ func mergeMode(mode docu.Mode, ch chan interface{}, source, target, lang string)
 	var fs docu.Target
 	var output *os.File
 
-	// source 必须含有 '/src/'
 	pos := posForImport(source)
 	if pos == -1 {
 		<-ch
-		err = errors.New("invalid source: " + source)
+		err = errors.New("invalid path: " + source)
 		return
 	}
 
@@ -554,11 +594,7 @@ func mergeMode(mode docu.Mode, ch chan interface{}, source, target, lang string)
 	return
 }
 
-type description struct {
-	Repo, Description, Subdir string
-}
-
-func listMode(ch chan interface{}, target, lang string) (err error) {
+func listMode(ch chan interface{}, pos int, target, lang string) (err error) {
 	var ok bool
 	var source string
 	var paths []string
@@ -566,10 +602,6 @@ func listMode(ch chan interface{}, target, lang string) (err error) {
 	var list docu.List
 	var filter func(string) bool
 	var bs []byte
-
-	if lang != "" {
-		filter = docu.SuffixFilter("_" + lang + ".go")
-	}
 
 	if target != "" {
 		info, err := os.Stat(target)
@@ -582,18 +614,33 @@ func listMode(ch chan interface{}, target, lang string) (err error) {
 			return errors.New("invalid target")
 		}
 		bs, _ = ioutil.ReadFile(target)
-		// 提取 Description
+		// 提取现有属性
 		if bs != nil {
-			var desc description
-			if json.Unmarshal(bs, &desc) == nil {
-				list.Repo = desc.Repo
-				list.Description = desc.Description
-				list.Subdir = desc.Subdir
+			json.Unmarshal(bs, &list)
+		}
+
+		if list.Readme == "" {
+			list.Readme = docu.LookReadme(target)
+		}
+		if list.Readme != "" {
+			info, err := os.Lstat(filepath.Join(target, list.Readme))
+			if err != nil || info.IsDir() {
+				return errors.New("invalid readme file: " + list.Readme)
 			}
 		}
+		list.Package = nil
 	}
 
-	list.Markdown = true
+	if lang == "" {
+		lang = list.Lang
+	} else {
+		list.Lang = lang
+	}
+
+	if lang != "" {
+		filter = docu.SuffixFilter("_" + lang + ".go")
+	}
+
 	for i := <-ch; i != nil; i = <-ch {
 		if err, ok = i.(error); !ok {
 			du = docu.New(docu.ShowUnexported | docu.ShowCMD | docu.ShowTest)
@@ -604,7 +651,7 @@ func listMode(ch chan interface{}, target, lang string) (err error) {
 			paths, err = du.Parse(source, nil)
 		}
 		if err != nil {
-			break
+			return
 		}
 		if len(paths) == 0 {
 			ch <- nil
@@ -616,20 +663,28 @@ func listMode(ch chan interface{}, target, lang string) (err error) {
 			lang = du.NormalLang(key)
 			if lang == "" {
 				err = errors.New("invalid NormalLang in source: " + source)
-				break
+				return
 			}
 			filter = docu.SuffixFilter("_" + lang + ".go")
 		}
+
 		file := du.MergePackageFiles(key)
 		info := docu.Info{
 			Synopsis: doc.Synopsis(file.Doc.Text()),
 			Progress: docu.TranslationProgress(file),
+			Readme:   docu.LookReadme(source),
 		}
 		// 非 std 包 import paths 需要重新计算
-		for _, key := range paths {
+		for i, key := range paths {
 			pos := strings.LastIndex(key, "::")
+			if i == 0 {
+				if pos == -1 {
+					info.Import = key
+				} else {
+					info.Import = key[:pos]
+				}
+			}
 			if pos == -1 {
-				info.Prefix = "doc"
 				continue
 			}
 			if info.Prefix == "" {
@@ -638,12 +693,45 @@ func listMode(ch chan interface{}, target, lang string) (err error) {
 				info.Prefix = "," + key[pos+2:]
 			}
 		}
-		list.Info = append(list.Info, info)
+		list.Package = append(list.Package, info)
+		if list.Repo == "" {
+			// 官方包引向 github, 其它引向 "localhost"
+			imp := info.Import
+			if strings.HasPrefix(imp, "golang.org/x") {
+				list.Repo = "github.com/golang/tools"
+			} else if pos := strings.IndexByte(imp, '/'); pos != -1 {
+				imp = imp[:pos]
+			}
+			if list.Repo == "" && strings.IndexByte(imp, '.') == -1 {
+				list.Repo = "github.com/golang/go"
+			} else if list.Repo == "" {
+				for _, wh := range docu.Warehouse {
+					if !strings.HasPrefix(info.Import, wh.Host) || info.Import[len(wh.Host)] != '/' {
+						continue
+					}
+					repo := info.Import
+					for i := 0; i < wh.Part; i++ {
+						pos := strings.IndexByte(repo[1:], '/') + 1
+						if pos == 0 {
+							list.Repo += repo
+							break
+						}
+						list.Repo += repo[:pos]
+						repo = repo[pos:]
+					}
+					break
+				}
+				if list.Repo == "" {
+					list.Repo = "localhost"
+				}
+			}
+		}
 		if err != nil {
-			break
+			return
 		}
 		ch <- nil
 	}
+
 	bs, err = json.MarshalIndent(list, "", "    ")
 	if err == nil {
 		if target == "" {
@@ -656,7 +744,6 @@ func listMode(ch chan interface{}, target, lang string) (err error) {
 				output.Close()
 			}
 		}
-
 	}
 	return
 }

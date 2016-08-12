@@ -85,7 +85,7 @@ func (du *Docu) NormalLang(key string) string {
 
 // MergePackageFiles 合并 import paths 的包为一个已排序的 ast.File 文件.
 func (du *Docu) MergePackageFiles(paths string) (file *ast.File) {
-	if du == nil {
+	if du == nil || len(du.astpkg) == 0 {
 		return nil
 	}
 	pkg, ok := du.astpkg[paths]
@@ -256,18 +256,16 @@ func (du *Docu) parseFromVfs(fs vfs.FileSystem, dir string,
 
 func (du *Docu) parseFile(abs, name string, src interface{}) (string, error) {
 	none := name == ""
-	importPaths := strings.Replace(abs, `\`, `/`, -1)
+	importPaths := LookImportPath(abs)
+	if importPaths == "" {
+		return "", errors.New("LookImportPath fail: " + abs)
+	}
 	abs = filepath.Join(abs, name)
 
 	if du.mode&ShowTest == 0 && (strings.HasSuffix(abs, "_test.go") ||
 		filepath.Base(abs) == "test.go") {
 
 		return "", nil
-	}
-
-	pos := strings.LastIndex(importPaths, "/src/")
-	if pos != -1 {
-		importPaths = importPaths[pos+5:]
 	}
 
 	astfile, err := parser.ParseFile(du.FileSet, abs, src, du.parserMode)
