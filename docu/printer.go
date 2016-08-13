@@ -2,7 +2,6 @@ package docu
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"go/ast"
 	"go/doc"
@@ -39,44 +38,39 @@ func ToSource(output io.Writer, text string) error {
 }
 
 // FormatComments 调用 LineWrapper 换行格式化注释 text 输出到 output.
-// 该方法会移除 GoDocu 分割线 ___GoDocu_Dividing_line___
 func FormatComments(output io.Writer, text, prefix string, limit int) (err error) {
-	n := strings.Index(text, "___GoDocu_Dividing_line___")
-	if n > 1 {
-		if text[n-1] != '\n' && text[n+26] != '\n' {
-			return errors.New("invalid ___GoDocu_Dividing_line___")
-		}
-		// 需要剔除右侧空白, 可用 merge builtin 测试
-		err = FormatComments(output, strings.TrimRightFunc(text[:n-1], unicode.IsSpace), prefix, limit)
-		if err == nil {
-			if _, err = io.WriteString(output, "\n"); err == nil {
-				err = FormatComments(output, text[n+27:], prefix, limit)
-			}
-		}
-		return
+	var source string
+	source, text = SplitComments(text)
+	if source != "" {
+		_, err = io.WriteString(output, WrapComments(source, prefix, limit)+"\n")
 	}
-	if text != "" {
+	if text != "" && err == nil {
 		_, err = io.WriteString(output, WrapComments(text, prefix, limit))
 	}
 	return
 }
-
-func WrapComments(text, prefix string, limit int) string {
-	if text != "" {
-		var buf bytes.Buffer
-		// 利用 ToText 的 preIndent 功能合并连续行
-		if !IsWrapped(text, limit) {
-			doc.ToText(&buf, text, "", "    ", 1<<32)
-			text = buf.String()
-		} else {
-			limit = 1 << 32
-		}
-		text = LineWrapper(text, prefix, limit)
-	}
-	return text
+func isNotSpace(r rune) bool {
+	return !unicode.IsSpace(r)
 }
 
-// SplitComments 分割 MergeDoc 合并后的文档文本为上下两部分.
+// WrapComments 优化调用 LineWrapper.
+// 如果 !IsWrapped(text, limit) 对 text 连续行进行折叠.
+func WrapComments(text, prefix string, limit int) string {
+	var buf bytes.Buffer
+	if text == "" {
+		return ""
+	}
+	if !IsWrapped(text, limit) {
+		doc.ToText(&buf, text, "", "    ", 1<<32)
+		text = buf.String()
+	} else {
+		limit = 1 << 32
+	}
+	return LineWrapper(text, prefix, limit)
+}
+
+// SplitComments 以 "___GoDocu_Dividing_line___" 分割 text 为两部分.
+// 如果没有分割线返回 "",text
 func SplitComments(text string) (string, string) {
 	n := strings.Index(text, "___GoDocu_Dividing_line___")
 	if n == -1 {
@@ -139,7 +133,21 @@ func visualWidth(text string) (w int) {
 	return
 }
 
-// KeepPunct 当这些标点符号位于行尾时, 前一个词会被折到下一行.
+func firstWidth(text string) (w int) {
+	for _, r := range text {
+		if r == '\n' {
+			return
+		}
+		if r > unicode.MaxLatin1 {
+			w += 2
+		} else {
+			w++
+		}
+	}
+	return
+}
+
+// KeepPunct 当这些标点符号位于折行处时, 前一个词会被折到下一行.
 var KeepPunct = `,.:;?，．：；？。`
 
 // WrapPunct 当这些标点符号位于行尾时, 会被折到下一行.
@@ -158,6 +166,57 @@ func runeWidth(r rune) int {
 	return 1
 }
 
+// 返回 text 第一行内不超过 limit 的位置
+func limitPos(text string, limit int) (int, rune) {
+	const keepPunct = "`!*@" + `,.:;?，．：；？。"'[(“（［`
+
+	var s, ps, ww int
+	var pr, sr rune
+	w := strings.IndexByte(text, '\n')
+	if text[0] == '\t' || strings.HasPrefix(text, "    ") {
+		if w == -1 {
+			return len(text), 0
+		}
+		return w, 0
+	}
+
+	w, ww = 0, 1
+	for i, r := range text {
+		if r == '\n' {
+			return i, r
+		}
+		ps, pr = s, sr
+		if r == '\t' {
+			w = w/4*4 + 4
+			s, sr = i, r
+		} else {
+			if r == ' ' || r == '　' {
+				s, sr = i, r
+			}
+		}
+		width := runeWidth(r)
+		if width == 2 || ww != width {
+			s, sr = i, r
+		}
+		ww = width
+		// 连续长字符串
+		if s == 0 || w+ww <= limit {
+			w += ww
+			continue
+		}
+		if s != i || ps == 0 || strings.IndexRune(keepPunct, r) == -1 {
+			return s, sr
+		}
+		// 回退单词, 保持标点符号
+		return ps, pr
+	}
+	return len(text), 0
+}
+
+func urlEnd(r rune) bool {
+	return r == 0 || runeWidth(r) == 2 || unicode.IsSpace(r)
+}
+
 // LineWrapper 把 text 非缩进行超过显示长度 limit 的行插入换行符 "\n".
 // 细节:
 //	text   行间 tab 按 4 字节宽度计算.
@@ -165,6 +224,72 @@ func runeWidth(r rune) int {
 //	limit  的长度不包括 prefix 的长度.
 //	返回 wrap 的尾部带换行
 func LineWrapper(text string, prefix string, limit int) (wrap string) {
+	for len(text) != 0 {
+		last := ""
+		pos, r := limitPos(text, limit)
+
+		if pos <= limit && pos != len(text) && !urlEnd(r) {
+			// 保证网址完整性
+			i := UrlPos(text[:pos])
+			if i != -1 {
+				pos = strings.IndexFunc(text[i:], unicode.IsSpace)
+				if pos == -1 {
+					pos = len(text) - i
+				}
+				if i != 0 {
+					last = text[:i]
+					wrap += strings.TrimRightFunc(prefix+last, unicode.IsSpace) + nl
+				}
+				last, text = text[i:pos], text[i+pos:]
+				wrap += strings.TrimRightFunc(prefix+last, unicode.IsSpace) + nl
+
+				if len(text) != pos && text[pos] == '\n' {
+					text = text[pos+1:]
+				} else {
+					text = strings.TrimLeftFunc(text[pos:], unicode.IsSpace)
+				}
+				continue
+			}
+		}
+
+		if text[0] == '\t' {
+			i := 0
+			for ; i < len(text); i++ {
+				if text[i] != '\t' {
+					break
+				}
+				last += "    "
+			}
+			last += text[i:pos]
+		} else {
+			last = text[:pos]
+		}
+
+		wrap += strings.TrimRightFunc(prefix+last, unicode.IsSpace) + nl
+
+		if len(text) != pos && text[pos] == '\n' {
+			text = text[pos+1:]
+		} else {
+			text = strings.TrimLeftFunc(text[pos:], unicode.IsSpace)
+		}
+
+	}
+
+	prefix = strings.TrimRightFunc(prefix, unicode.IsSpace)
+	if prefix != "" {
+		prefix += nl
+		for strings.HasPrefix(wrap, prefix) {
+			wrap = wrap[len(prefix):]
+		}
+	}
+	if wrap == "" || wrap[len(wrap)-1] != '\n' {
+		wrap += nl
+	}
+	return wrap
+}
+
+// 老算法
+func _lineWrapper(text string, prefix string, limit int) (wrap string) {
 	// go scanner 已经剔除了 '\r', 统一为 '\n' 风格
 	const nl = "\n"
 	var r, next rune
@@ -178,11 +303,7 @@ func LineWrapper(text string, prefix string, limit int) (wrap string) {
 		// 预读取一个
 		r, next = next, r
 		if r == 0 {
-			// 剔除首行缩进
-			if wrap == "" && (next == ' ' || next == '\t' || w == 0 && next == '\n') {
-				next = 0
-				continue
-			}
+			// NOTE(achun): 不应该剔除首行缩进, 那可能是作者强调的信息
 			nw = runeWidth(next)
 			continue
 		}

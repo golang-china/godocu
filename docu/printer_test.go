@@ -21,6 +21,7 @@ func TestLineWrapper(t *testing.T) {
 		text string
 		want string
 	}{
+		{"", ""}, {"     ", ""}, {"\n", ""}, {"\t\n", ""},
 		{
 			"the mode, using the given Block. The length of iv must be the same as the Block's",
 			"// the mode, using the given Block. The length of iv must be the same as the\n// Block's",
@@ -50,10 +51,37 @@ func TestLineWrapper(t *testing.T) {
 			"SignPSS采用RSASSA-PSS方案计算签名。注意hashed必须是使用提供给本函数的hash参数对（要签名的）原始数据进行hash的结果。opts参数可以为nil，此时会使用默认参数。\n",
 			"// SignPSS采用RSASSA-PSS方案计算签名。注意hashed必须是使用提供给本函数的hash参数\n// 对（要签名的）原始数据进行hash的结果。opts参数可以为nil，此时会使用默认参数。",
 		},
+		{
+			"一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七八。九十",
+			"// 一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三四五六七\n// 八。九十",
+		},
+		{
+			"http://123.456.com/3243214324234354354353245345435435435435435435435435342543543 yes",
+			"// http://123.456.com/3243214324234354354353245345435435435435435435435435342543543\n// yes",
+		},
+		{
+			"see http://123.456.com/3243214324234354354353245345435435435435435435435435342543543",
+			"// see\n// http://123.456.com/3243214324234354354353245345435435435435435435435435342543543",
+		},
+		{
+			"see http://123.456.com/3243214324234354354353245345435435435435435435435433333 reame.me",
+			"// see\n// http://123.456.com/3243214324234354354353245345435435435435435435435433333\n// reame.me",
+		},
+		{
+			"see\n    http://123.456.com/3243214324234354354353245345435435435435435435435433333 reame.me",
+			"// see\n//     http://123.456.com/3243214324234354354353245345435435435435435435435433333 reame.me",
+		},
 	}
 	for _, tt := range tests {
 		if got := LineWrapper(tt.text, "// ", 77); got != tt.want+"\n" {
-			t.Errorf("LineWrapper() =\n%v\nwant\n%v", got, tt.want)
+			t.Errorf("LineWrapper() =\n%v\nwant %d\n%v", got, firstWidth(tt.want), tt.want)
 		}
+	}
+}
+
+func BenchmarkDocu_Parse(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		du := New(0)
+		du.Parse("go/types", nil)
 	}
 }

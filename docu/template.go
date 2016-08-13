@@ -131,6 +131,7 @@ var FuncsMap = template.FuncMap{
 		return comments[i]
 	},
 	"imports": func(file *ast.File) string {
+		// 返回 file 的 import 代码
 		return ImportsString(file.Imports)
 	},
 	"wrap": func(text string) string {
@@ -138,6 +139,7 @@ var FuncsMap = template.FuncMap{
 		return WrapComments(text, "", 1<<32)
 	},
 	"starLess": func(lit string) string {
+		// 去掉 lit 前面的星号
 		if lit == "" || lit[0] != '*' {
 			return lit
 		}

@@ -36,7 +36,7 @@ The commands are:
     code    prints a formatted string to target as Go source code
     plain   prints plain text documentation to target as godoc
     list    prints godocu style documents list
-    tmpl    prints documentation from template file
+    tmpl    prints documentation from template
     merge   merge source doc to target
 
 The source are:
@@ -67,7 +67,7 @@ func flagParse() (mode docu.Mode, command, source, target, lang, tmpl string) {
 	flag.BoolVar(&u, "u", false, "show unexported symbols as well as exported")
 	flag.BoolVar(&cmd, "cmd", false, "show symbols with package docs even if package is a command")
 	flag.BoolVar(&test, "test", false, "show symbols with package docs even if package is a testing")
-	flag.StringVar(&tmpl, "template", "", "template file for tmpl")
+	flag.StringVar(&tmpl, "file", "", "template file for tmpl")
 
 	if len(os.Args) < 3 {
 		flagUsage()
@@ -225,18 +225,13 @@ func main() {
 			err = errors.New("invalid path: " + source)
 		}
 	case "tmpl":
-		if tmpl != "" {
-			bs, e := ioutil.ReadFile(tmpl)
-			if e != nil {
-				err = e
-				break
-			}
-			tmpl = string(bs)
-		} else {
-			tmpl = docu.DefaultTemplate
-		}
 		tpl := template.New("Godocu").Funcs(docu.FuncsMap)
-		tpl, err = tpl.Parse(tmpl)
+		if tmpl != "" {
+			tpl, err = tpl.ParseFiles(tmpl)
+		} else {
+			tpl, err = tpl.Parse(docu.DefaultTemplate)
+		}
+
 		if err != nil {
 			<-ch
 			break

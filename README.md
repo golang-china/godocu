@@ -6,12 +6,13 @@ Godocu 基于 [docu] 实现的指令行工具, 从 Go 源码提取并生成文�
 
   - 80 列换行, 支持多字节字符
   - 若原注释已经符合 80 列换行, 保持不变.
-  - 内置两种文档风格, Go 源码风格和 godoc 文本风格
+  - 内置三种文档风格, Go 源码风格, godoc 文本风格, Markdown 模板
   - 可提取执行包文档, 测试包文档, 非导出符号文档
   - 遍历目录
   - 生成文档概要清单
   - 合并不同版本文档
   - 简单比较包文档的不同之处
+  - 支持外部模板文件
 
 该工具在 Golang 官方包下测试通过, 非官方包请核对输出结果.
 
@@ -49,6 +50,7 @@ The commands are:
     code    prints a formatted string to target as Go source code
     plain   prints plain text documentation to target as godoc
     list    prints godocu style documents list
+    tmpl    prints documentation from template
     merge   merge source doc to target
 
 The source are:
@@ -70,6 +72,8 @@ The arguments are:
       Go root directory (default $GOROOT)
   -lang string
       the lang pattern for the output file, form like en or zh_CN
+  -file string
+      template file for tmpl
   -test
       show symbols with package docs even if package is a testing
   -u  show unexported symbols as well as exported
@@ -127,6 +131,10 @@ target 在 `diff`,`first`,`tree`,`code`,`plain`,`merge` 指令中表示绝对的
 
  1. 已存在符合 docu 命名风格的 ".go" 文档, 目标中的非导出声明被保留
  2. 否则按是否使用了 'u' 参数处理.
+
+# file
+
+参数 'file' 表示外部文件, 目前仅为 `tmpl` 指令指定外部模板文件.
 
 # Code
 
@@ -229,137 +237,60 @@ FROM: package reflect
 来自: package reflect
 ```
 
-比较 go/types 在当前版本 1.6.2 和老版本的差异
+比较 os 包在当前版本 1.6.2 和老版本的差异
 
 ```shell
-$ godocu diff go/types /usr/local/Cellar/go/1.5.3/libexec/src
+$ godocu diff os /usr/local/Cellar/go/1.5.3/libexec/src
 ```
 
 输出
 
 ```
 TEXT:
-    Package types declares the data types and implements
-    the algorithms for type-checking of Go packages. Use
-    Config.Check to invoke the type checker for a package.
-    Alternatively, create a new type checked with NewChecker
-    and invoke it incrementally by calling Checker.Files.
-
-    Type-checking consists of several interdependent phases:
-
-    Name resolution maps each identifier (ast.Ident) in the program to the
-    language object (Object) it denotes.
-    Use Info.{Defs,Uses,Implicits} for the results of name resolution.
-
-    Constant folding computes the exact constant value (constant.Value)
-    for every expression (ast.Expr) that is a compile-time constant.
-    Use Info.Types[expr].Value for the results of constant folding.
-
-    Type inference computes the type (Type) of every expression (ast.Expr)
-    and checks for compliance with the language specification.
-    Use Info.Types[expr].Type for the results of type inference.
-
-    For a tutorial, see https://golang.org/s/types-tutorial.
+    Type ProcessState struct{pid int; status syscall.WaitStatus; rusage
+    *syscall.Rusage}
 DIFF:
-    Package types declares the data types and implements
-    the algorithms for type-checking of Go packages. Use
-    Config.Check to invoke the type checker for a package.
-    Alternatively, create a new type checked with NewChecker
-    and invoke it incrementally by calling Checker.Files.
-
-    Type-checking consists of several interdependent phases:
-
-    Name resolution maps each identifier (ast.Ident) in the program to the
-    language object (Object) it denotes.
-    Use Info.{Defs,Uses,Implicits} for the results of name resolution.
-
-    Constant folding computes the exact constant value (constant.Value)
-    for every expression (ast.Expr) that is a compile-time constant.
-    Use Info.Types[expr].Value for the results of constant folding.
-
-    Type inference computes the type (Type) of every expression (ast.Expr)
-    and checks for compliance with the language specification.
-    Use Info.Types[expr].Type for the results of type inference.
+    Type ProcessState struct{pid int; status *syscall.Waitmsg}
 
 TEXT:
-    import (
-        "bytes"
-        "container/heap"
-        "fmt"
-        "go/ast"
-        "go/constant"
-        "go/parser"
-        "go/token"
-        "io"
-        "math"
-        "sort"
-        "strconv"
-        "strings"
-        "sync"
-        "testing"
-        "unicode"
-    )
+    func FindProcess(pid int) (*Process, error)
 DIFF:
-    import (
-        "bytes"
-        "container/heap"
-        "fmt"
-        "go/ast"
-        "go/constant"
-        "go/parser"
-        "go/token"
-        "io"
-        "math"
-        "path"
-        "sort"
-        "strconv"
-        "strings"
-        "testing"
-        "unicode"
-    )
+    func FindProcess(pid int) (p *Process, err error)
 
 TEXT:
-    func (*Config) Check(path string, fset *token.FileSet, files []*ast.File, info *Info)
-    (*Package, error)
+    func Rename(oldpath, newpath string) error
 
-    Check type-checks a package and returns the resulting package object and
-    the first error if any. Additionally, if info != nil, Check populates each
-    of the non-nil maps in the Info struct.
-
-    The package is marked as complete if no errors occurred, otherwise it is
-    incomplete. See Config.Error for controlling behavior in the presence of
-    errors.
-
-    The package is specified by a list of *ast.Files and corresponding
-    file set, and the package path the package is identified with.
-    The clean path must not be empty or dot (".").
+    Rename renames (moves) oldpath to newpath.
+    If newpath already exists, Rename replaces it.
+    OS-specific restrictions may apply when oldpath and newpath are in different
+    directories.
+    If there is an error, it will be of type *LinkError.
 DIFF:
-    func (*Config) Check(path string, fset *token.FileSet, files []*ast.File, info *Info)
-    (*Package, error)
+    func Rename(oldpath, newpath string) error
 
-    Check type-checks a package and returns the resulting package object,
-    the first error if any, and if info != nil, additional type information.
-    The package is marked as complete if no errors occurred, otherwise it is
-    incomplete. See Config.Error for controlling behavior in the presence of
-    errors.
-
-    The package is specified by a list of *ast.Files and corresponding
-    file set, and the package path the package is identified with.
-    The clean path must not be empty or dot (".").
+    Rename renames (moves) a file. OS-specific restrictions might apply.
+    If there is an error, it will be of type *LinkError.
 
 TEXT:
-    func (*Package) SetName(name string)
-DIFF:
-    none
+    func (*File) Seek(offset int64, whence int) (ret int64, err error)
 
-FROM: package go/types
+    Seek sets the offset for the next Read or Write on file to offset, interpreted
+    according to whence: 0 means relative to the origin of the file, 1 means
+    relative to the current offset, and 2 means relative to the end.
+    It returns the new offset and an error, if any.
+    The behavior of Seek on a file opened with O_APPEND is not specified.
+DIFF:
+    func (*File) Seek(offset int64, whence int) (ret int64, err error)
+
+    Seek sets the offset for the next Read or Write on file to offset, interpreted
+    according to whence: 0 means relative to the origin of the file, 1 means
+    relative to the current offset, and 2 means relative to the end.
+    It returns the new offset and an error, if any.
+
+FROM: package os
 ```
 
-go 1.6.2 的 Doc 注释多了一行
-
-    For a tutorial, see https://golang.org/s/types-tutorial.
-
-和其它一些变化.
+可以看到结构体和注释有些区别.
 
 如果看到的不是 `TEXT:` 而是 `FORM:` 表示折叠为一行后值相同, 即格式发生变化,
 
@@ -482,6 +413,9 @@ $ godocu merge ... /path/to/github.com/golang-china/golangdoc.translations/src
 
 例子中的 target 含有子目录 "src", 并以它结尾, 这不是必须的.
 
+# Tmpl
+
+tmpl 指令支持模板输出, 内置 Markdown 模板可供参考.
 
 # Example
 
@@ -511,7 +445,10 @@ github.com
             └── doc_zh_CN.go
 ```
 
-显然 Godocu 生成的目录结构是带完整导入路径的, 那么接下来的 git 操作为:
+可见源码包和文档的目录树结构是一致的. Godocu 以此计算导入路径.
+显然 doc_zh_CN.go 中其实是英文文档. 文档翻译请参见 [golang-china][].
+
+接下来是常规的 git 操作:
 
 ```shell
 $ cd $TARGET/github.com/google
@@ -519,7 +456,7 @@ $ git init
 $ git remote add origin git@github.com:gohub/google.git
 ```
 
-如果在使用 Godocu 之前已经做了翻译, 保持目录结构与完整导入路径对应即可. 比如:
+如果在使用 Godocu 之前已经做了翻译, 确保目录结构一致即可. 比如:
 
 ```shell
 $ cd $TARGET
@@ -538,6 +475,8 @@ github.com
     └── golist.json
 ```
 
-显然子目录树结构在原源码包和翻译文档中必须保持一致.
+
+之后就可使用 Godocu 提供的指令进行文档操作了.
 
 [docu]: https://godoc.org/github.com/golang-china/godocu/docu
+[golang-china]: https://github.com/golang-china/golang-china.github.com
