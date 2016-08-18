@@ -11,6 +11,11 @@ var (
 	GOPATHS = filepath.SplitList(os.Getenv("GOPATH"))
 )
 
+// via go/build/syslist.go
+
+const goosList = "android darwin dragonfly freebsd linux nacl netbsd openbsd plan9 solaris windows "
+const goarchList = "386 amd64 amd64p32 arm armbe arm64 arm64be ppc64 ppc64le mips mipsle mips64 mips64le mips64p32 mips64p32le ppc s390 s390x sparc sparc64 "
+
 // Warehouse 为预定义托管仓库域名.
 // 因托管商差异, 依照 Part 计算的仓库地址不一定正确.
 var Warehouse = []struct {
@@ -37,6 +42,16 @@ func strOr(a, b string) string {
 func exists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func existsDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func existsFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 // Abs 返回 path 的绝对路径.

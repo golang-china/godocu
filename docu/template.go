@@ -23,7 +23,7 @@ type Data struct {
 	filter func(*ast.File) bool
 }
 
-// NewData 返回需要自建立 Data.Docu 的 Data 对象.
+// NewData 返回需要自建立 Data.Docu 的 Data 实例.
 func NewData() *Data {
 	return &Data{
 		IMPORT: ImportNum,

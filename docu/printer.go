@@ -37,6 +37,31 @@ func ToSource(output io.Writer, text string) error {
 	return FormatComments(output, text, "// ", 77)
 }
 
+func formatTrans(output io.Writer,
+	trans *ast.CommentGroup, comments []*ast.CommentGroup) (err error) {
+	if trans == nil {
+		return fprint(output, nl)
+	}
+	// 兼容 merge 造成的问题
+	text := trans.Text()
+	if comments == nil || strings.Index(text, GoDocu_Dividing_line) != -1 {
+		return ToSource(output, text)
+	}
+
+	pos := findCommentPrev(trans.Pos()-2, comments)
+	if pos != -1 {
+		err = ToSource(output, comments[pos].Text())
+		if err == nil {
+			err = fprint(output, nl)
+		}
+	}
+
+	if err == nil {
+		err = ToSource(output, text)
+	}
+	return
+}
+
 // FormatComments 调用 LineWrapper 换行格式化注释 text 输出到 output.
 func FormatComments(output io.Writer, text, prefix string, limit int) (err error) {
 	var source string
@@ -69,15 +94,15 @@ func WrapComments(text, prefix string, limit int) string {
 	return LineWrapper(text, prefix, limit)
 }
 
-// SplitComments 以 "___GoDocu_Dividing_line___" 分割 text 为两部分.
+// SplitComments 以 GoDocu_Dividing_line 分割 text 为两部分.
 // 如果没有分割线返回 "",text
 func SplitComments(text string) (string, string) {
-	n := strings.Index(text, "___GoDocu_Dividing_line___")
+	n := strings.Index(text, GoDocu_Dividing_line)
 	if n == -1 {
 		return "", text
 	}
 	return strings.TrimRightFunc(text[:n], unicode.IsSpace),
-		strings.TrimLeftFunc(text[n+26:], unicode.IsSpace)
+		strings.TrimLeftFunc(text[n+len(GoDocu_Dividing_line):], unicode.IsSpace)
 }
 
 // UrlPos 识别 text 第一个网址出现的位置.
@@ -148,9 +173,11 @@ func firstWidth(text string) (w int) {
 }
 
 // KeepPunct 当这些标点符号位于折行处时, 前一个词会被折到下一行.
+// 已过时, 未来会删除
 var KeepPunct = `,.:;?，．：；？。`
 
 // WrapPunct 当这些标点符号位于行尾时, 会被折到下一行.
+// 已过时,未来会删除
 var WrapPunct = "`!*@" + `"'[(“（［`
 
 func runeWidth(r rune) int {
@@ -536,6 +563,11 @@ func Godoc(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 // DocGo 以 go source 风格向 output 输出已排序的 ast.File.
 func DocGo(output io.Writer, paths string, fset *token.FileSet, file *ast.File) (err error) {
 	var text string
+	var comments []*ast.CommentGroup
+	if IsGodocuFile(file) {
+		comments = file.Comments
+	}
+
 	if text = License(file); text != "" {
 		if err = ToSource(output, text); err == nil {
 			err = fprint(output, nl)
@@ -546,7 +578,7 @@ func DocGo(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 	}
 
 	if err == nil && file.Doc != nil {
-		err = ToSource(output, file.Doc.Text())
+		err = formatTrans(output, file.Doc, comments)
 	}
 	if err != nil {
 		return
@@ -584,7 +616,7 @@ func DocGo(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 		if num == FuncNum || num == MethodNum {
 			fdecl := decl.(*ast.FuncDecl)
 			if fdecl.Doc != nil {
-				if err = ToSource(output, fdecl.Doc.Text()); err != nil {
+				if err = formatTrans(output, fdecl.Doc, comments); err != nil {
 					return
 				}
 			}
@@ -603,7 +635,7 @@ func DocGo(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 
 		docGroup := genDecl.Doc
 		genDecl.Doc = nil
-		if err = ToSource(output, docGroup.Text()); err != nil {
+		if err = formatTrans(output, docGroup, comments); err != nil {
 			return
 		}
 		if err = config.Fprint(output, fset, genDecl); err != nil {

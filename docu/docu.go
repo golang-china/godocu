@@ -16,35 +16,23 @@ import (
 	"golang.org/x/tools/godoc/vfs"
 )
 
-type Mode int
-
-const (
-	ShowCMD Mode = 1 << iota
-	ShowUnexported
-	ShowTest
-)
-
 // Docu 复合 token.FileSet, ast.Package 提供 Go doc 支持.
 type Docu struct {
-	mode       Mode
-	parserMode parser.Mode
-	FileSet    *token.FileSet
+	parser.Mode
+	FileSet *token.FileSet
 	// astpkg 的 key 以 import paths 和包名计算得来.
 	// 如果包名为 "main" 或者 "_test" 结尾, key 为 import paths 附加 "::"+包名.
 	// 否则 key 为 import paths.
 	astpkg map[string]*ast.Package
-	// Filter 用于生成 astpkg 时过滤目录名和文件名 name.
-	// name 不包括上级路径.
+	// Filter 用于生成 astpkg 时过滤文件名和包名.
+	// 显然文件名包含后缀 ".go", 包名则没有.
 	Filter func(name string) bool
 }
 
-// New 返回使用 DefaultFilter 进行过滤的 Docu.
-func New(mode Mode) *Docu {
-	du := &Docu{mode, parser.ParseComments, token.NewFileSet(), make(map[string]*ast.Package), DefaultFilter}
-	if mode|ShowTest != 0 {
-		du.Filter = ShowTestFilter
-	}
-	return du
+// New 返回使用 DefaultFilter 进行过滤的 Docu 实例.
+func New() *Docu {
+	return &Docu{parser.ParseComments, token.NewFileSet(),
+		make(map[string]*ast.Package), DefaultFilter}
 }
 
 // Package 返回 key 对应的 *ast.Package.
@@ -83,7 +71,18 @@ func (du *Docu) NormalLang(key string) string {
 	return ""
 }
 
+// GodocuStyle 用来快速识别是否为 Godocu 文件命名风格.
+var GodocuStyle = ast.NewIdent("Godocu Style")
+
+var godocuStyle = []*ast.Ident{GodocuStyle}
+
+func IsGodocuFile(file *ast.File) bool {
+	return file != nil && len(file.Unresolved) != 0 &&
+		file.Unresolved[0] == GodocuStyle
+}
+
 // MergePackageFiles 合并 import paths 的包为一个已排序的 ast.File 文件.
+// 如果该 file 是 Godocu 文件命名风格, 设置 file.Unresolved[0] = GodocuStyle.
 func (du *Docu) MergePackageFiles(key string) (file *ast.File) {
 	if du == nil || len(du.astpkg) == 0 {
 		return nil
@@ -94,7 +93,11 @@ func (du *Docu) MergePackageFiles(key string) (file *ast.File) {
 	}
 	// 单文件优化
 	if len(pkg.Files) == 1 {
-		for _, file = range pkg.Files {
+		var name string
+		for name, file = range pkg.Files {
+		}
+		if IsNormalName(filepath.Base(name)) {
+			file.Unresolved = godocuStyle
 		}
 	} else {
 		// 抛弃无关的 Comments
@@ -187,9 +190,6 @@ func (du *Docu) Parse(path string, source interface{}) (paths []string, err erro
 
 	// 数据方式
 	abs := Abs(path)
-	if !du.Filter(path) {
-		return nil, errors.New("Parse: invalid path: " + path)
-	}
 	pos := strings.LastIndexAny(abs, `\/`)
 	if pos != -1 {
 		path, abs = abs[pos+1:], abs[:pos]
@@ -229,7 +229,9 @@ func (du *Docu) parseFromVfs(fs vfs.FileSystem, dir string,
 
 	importPaths = nl
 	for _, info := range info {
-		if info.IsDir() || !du.Filter(info.Name()) {
+		if info.IsDir() || !strings.HasSuffix(info.Name(), ".go") ||
+			!du.filter(info.Name()) {
+
 			continue
 		}
 		if r, err = fs.Open(info.Name()); err == nil {
@@ -255,6 +257,10 @@ func (du *Docu) parseFromVfs(fs vfs.FileSystem, dir string,
 	return
 }
 
+func (du *Docu) filter(name string) bool {
+	return du.Filter == nil || du.Filter(name)
+}
+
 func (du *Docu) parseFile(abs, name string, src interface{}) (string, error) {
 	none := name == ""
 	importPaths := LookImportPath(abs)
@@ -263,28 +269,15 @@ func (du *Docu) parseFile(abs, name string, src interface{}) (string, error) {
 	}
 	abs = filepath.Join(abs, name)
 
-	if du.mode&ShowTest == 0 && (strings.HasSuffix(abs, "_test.go") ||
-		filepath.Base(abs) == "test.go") {
-
-		return "", nil
-	}
-
-	astfile, err := parser.ParseFile(du.FileSet, abs, src, du.parserMode)
+	astfile, err := parser.ParseFile(du.FileSet, abs, src, du.Mode)
 	if err != nil {
 		return "", err
 	}
 
 	name = astfile.Name.String()
-	if du.mode&ShowCMD == 0 && name == "main" ||
-		du.mode&ShowTest == 0 && (name == "test" || strings.HasSuffix(name, "_test")) {
-		return "", nil
-	}
 
-	if du.mode&ShowUnexported == 0 && !ExportedFileFilter(astfile) {
-		// 虽然可能没有导出内容, 但是可能有文档
-		if astfile.Doc == nil || len(astfile.Doc.List) == 0 {
-			return "", nil
-		}
+	if !du.filter(name) {
+		return "", nil
 	}
 
 	// 同目录多包, 比如 main, test

@@ -5,12 +5,10 @@ import (
 	"go/token"
 )
 
+const GoDocu_Dividing_line = "___GoDocu_Dividing_line___"
+
 // do not change this
-var docu_Dividing_line = []*ast.Comment{
-	&ast.Comment{Text: "//"},
-	&ast.Comment{Text: "// ___GoDocu_Dividing_line___"},
-	&ast.Comment{Text: "//"},
-}
+var comment_Dividing_line = &ast.Comment{Text: "//___GoDocu_Dividing_line___"}
 
 // MergeDecls 插入(合并) source,target 中相匹配的 Ident 的文档到 target 注释顶部.
 // 细节:
@@ -82,12 +80,18 @@ func mergeGenDecls(source, target []ast.Decl) {
 }
 
 // MergeDoc 合并 source.List 到 target.list 顶部.
+// 保持 target.Pos(), target.End() 不变
 func MergeDoc(source, target *ast.CommentGroup) {
+	pos, end := target.Pos(), target.End()
 	list := target.List
-	target.List = nil
+	target.List = make([]*ast.Comment, 0, len(source.List)+len(list)+1)
 	target.List = append(target.List, source.List...)
-	target.List = append(target.List, docu_Dividing_line...)
+	target.List = append(target.List, comment_Dividing_line)
 	target.List = append(target.List, list...)
+	cg := target.List[0]
+	cg.Slash = pos
+	cg = target.List[len(target.List)-1]
+	cg.Slash = token.Pos(int(end) - len(cg.Text))
 }
 
 func mergeFuncDecls(source, target []ast.Decl) {

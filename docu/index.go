@@ -190,7 +190,7 @@ func (s SortDecl) SearchSpec(specIdentLit string) ast.Spec {
 	return nil
 }
 
-// Filter 过滤掉 file 中的非导出顶级声明, 如果 s 中没有该声明的话.
+// Filter 过滤掉 file 中的非导出顶级声明, 如果该声明不在 s 中的话.
 // imports 声明总是被保留.
 func (s SortDecl) Filter(file *ast.File) bool {
 	return exportedFileFilter(file, s)

@@ -60,12 +60,12 @@ func FirstDiff(w io.Writer, source, target *ast.File) (diff bool, err error) {
 		return
 	}
 
-	diff, err = FormDiff(w, source.Doc.Text(), target.Doc.Text())
+	diff, err = TextDiff(w, source.Doc.Text(), target.Doc.Text())
 	if diff || err != nil {
 		return
 	}
 
-	diff, err = FormDiff(w, ImportsString(source.Imports), ImportsString(target.Imports))
+	diff, err = TextDiff(w, ImportsString(source.Imports), ImportsString(target.Imports))
 	if diff || err != nil {
 		return
 	}
@@ -116,12 +116,12 @@ func Diff(w io.Writer, source, target *ast.File) (diff bool, err error) {
 	if diff || err != nil {
 		return
 	}
-	out, err = FormDiff(w, source.Doc.Text(), target.Doc.Text())
+	out, err = TextDiff(w, source.Doc.Text(), target.Doc.Text())
 	if diff = diff || out; err != nil {
 		return
 	}
 
-	out, err = FormDiff(w, ImportsString(source.Imports), ImportsString(target.Imports))
+	out, err = TextDiff(w, ImportsString(source.Imports), ImportsString(target.Imports))
 	if diff = diff || out; err != nil {
 		return
 	}

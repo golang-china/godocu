@@ -30,47 +30,60 @@ const usage = `Usage:
 
 The commands are:
 
-    diff    compare the source and target, all difference output
-    first   compare the source and target, the first difference output
-    tree    compare different directory structure of the source and target
-    code    prints a formatted string to target as Go source code
-    plain   prints plain text documentation to target as godoc
-    list    prints godocu style documents list
-    tmpl    prints documentation from template
-    merge   merge source doc to target
+  diff    compare the source and target, all difference output
+  first   compare the source and target, the first difference output
+  tree    compare different directory structure of the source and target
+  code    prints a formatted string to target as Go source code
+  plain   prints plain text documentation to target as godoc
+  tmpl    prints documentation from template
+  list    generate godocu style documents list
+  merge   merge source doc to target
+  replace replace the target untranslated section in source translated section
 
 The source are:
 
-    package import path or absolute path
-    the path to a Go source file
+  package import path or absolute path
+  the path to a Go source file
 
 The target are:
 
-    the directory as an absolute base path for compare or prints
+  the directory as an absolute base path for compare or prints
 
 The arguments are:
+
+  -file string
+      template file for tmpl
+  -gopath string
+      specifies GOPATH (default $GOPATH)
+  -goroot string
+      specifies GOROOT (default $GOROOT)
+  -lang string
+      the lang pattern for the output file, form like en or zh_CN
+  -p string
+      package filtering, "package"|"main"|"test" (default "package")
+  -u
+      show unexported symbols as well as exported
 `
 
-func flagUsage() {
+func flagUsage(err string) {
 	fmt.Fprintln(os.Stderr, usage)
-	flag.PrintDefaults()
+	if err != "" {
+		log.Fatal(err)
+	}
 	os.Exit(2)
 }
 
-func flagParse() (mode docu.Mode, command, source, target, lang, tmpl string) {
+func flagParse() (command, source, target, lib, lang, file string, u bool) {
 	var gopath string
-	var u, cmd, test bool
-
-	flag.StringVar(&docu.GOROOT, "goroot", docu.GOROOT, "Go root directory")
-	flag.StringVar(&gopath, "gopath", os.Getenv("GOPATH"), "specifies gopath")
-	flag.StringVar(&lang, "lang", "", "the lang pattern for the output file, form like en or zh_CN")
-	flag.BoolVar(&u, "u", false, "show unexported symbols as well as exported")
-	flag.BoolVar(&cmd, "cmd", false, "show symbols with package docs even if package is a command")
-	flag.BoolVar(&test, "test", false, "show symbols with package docs even if package is a testing")
-	flag.StringVar(&tmpl, "file", "", "template file for tmpl")
+	flag.StringVar(&file, "file", "", "")
+	flag.StringVar(&docu.GOROOT, "goroot", docu.GOROOT, "")
+	flag.StringVar(&gopath, "gopath", os.Getenv("GOPATH"), "")
+	flag.StringVar(&lang, "lang", "", "")
+	flag.StringVar(&lib, "p", "package", "")
+	flag.BoolVar(&u, "u", false, "")
 
 	if len(os.Args) < 3 {
-		flagUsage()
+		flagUsage("")
 	}
 
 	args := make([]string, len(os.Args[2:]))
@@ -89,14 +102,19 @@ func flagParse() (mode docu.Mode, command, source, target, lang, tmpl string) {
 		}
 	}
 
-	flag.CommandLine.Parse(args)
+	err := flag.CommandLine.Parse(args)
+	if err != nil {
+		flagUsage(err.Error())
+	}
+	const libs = "package test main "
+	if pos := strings.Index(libs, lib); pos == -1 || libs[pos+len(lib)] != ' ' {
+		flagUsage("-p must be one of package,test,main. but got" + lib)
+	}
+
 	args = flag.Args()
 
-	// flag.CommandLine.Parse(os.Args[2:])
-	// args := flag.Args()
-
 	if len(args) == 0 || len(args) > 2 {
-		flagUsage()
+		flagUsage("")
 	}
 	command = os.Args[1]
 
@@ -105,19 +123,19 @@ func flagParse() (mode docu.Mode, command, source, target, lang, tmpl string) {
 		target = args[1]
 	}
 
+	docu.GOROOT, err = filepath.Abs(docu.GOROOT)
+	if err != nil {
+		flagUsage("invalid goroot: " + err.Error())
+	}
+
 	if gopath != os.Getenv("GOPATH") {
 		docu.GOPATHS = filepath.SplitList(gopath)
-	}
-
-	if u {
-		mode |= docu.ShowUnexported
-	}
-	if cmd {
-		mode |= docu.ShowCMD
-	}
-
-	if test {
-		mode |= docu.ShowTest
+		for i, path := range docu.GOPATHS {
+			docu.GOPATHS[i], err = filepath.Abs(path)
+			if err != nil {
+				flagUsage("invalid gopath: " + err.Error())
+			}
+		}
 	}
 	lang = docu.LangNormal(lang)
 
@@ -127,41 +145,106 @@ func flagParse() (mode docu.Mode, command, source, target, lang, tmpl string) {
 // 多文档输出分割线
 var sp = "\n\n" + strings.Repeat("/", 80) + "\n\n"
 
+func skipOSArch(f func(string) bool) func(string) bool {
+	return func(name string) bool {
+		return f(name) && !docu.IsOSArchFile(name)
+	}
+}
+
+func genNameFilter(lib, lang string) func(string) bool {
+	if lang == "" {
+		switch lib {
+		case "package":
+			return skipOSArch(docu.PackageFilter)
+		case "test":
+			return skipOSArch(docu.TestFilter)
+		case "main":
+			return skipOSArch(docu.MainFilter)
+		}
+		panic("BUG")
+	}
+	switch lib {
+	case "package":
+		return skipOSArch(docu.GenNameFilter("doc_" + lang + ".go"))
+	case "test":
+		return skipOSArch(docu.GenNameFilter("test_" + lang + ".go"))
+	case "main":
+		return skipOSArch(docu.GenNameFilter("main_" + lang + ".go"))
+	}
+	panic("BUG")
+}
+
+func genFileName(lib, lang, ext string) string {
+	if lang == "" {
+		return ""
+	}
+	switch lib {
+	case "package":
+		return "doc_" + lang + ext
+	case "test":
+		return "test_" + lang + ext
+	case "main":
+		return "main_" + lang + ext
+	}
+	panic("BUG")
+}
+
+func createFile(path, name string) (file *os.File, err error) {
+	if name == "" || path == "" {
+		return os.Stdout, nil
+	}
+	if err = os.MkdirAll(path, 0777); err == nil {
+		file, err = os.OpenFile(filepath.Join(path, name),
+			os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+	}
+	return
+}
+
 func main() {
+	const cmds = "code plain tmpl list diff first tree merge replace "
 	var err error
-	mode, command, source, target, lang, tmpl := flagParse()
+	var info os.FileInfo
+	command, source, target, lib, lang, file, u := flagParse()
+
+	pos := strings.Index(cmds, command)
+	if pos == -1 || cmds[pos+len(command)] != ' ' || target == "" && pos > 20 {
+
+		fmt.Fprintln(os.Stderr, usage)
+		log.Fatal("invalid command or target")
+	}
+
 	sub := strings.HasSuffix(source, "...")
 	if sub {
 		source = source[:len(source)-3]
 	}
+
 	if source == "" {
 		source = docu.GOROOT + docu.SrcElem[:4]
 	} else {
 		source = docu.Abs(source)
 	}
 
-	_, err = os.Stat(source)
-
-	if target == "" {
-		if command == "first" || command == "diff" || command == "merge" ||
-			command == "tree" {
-			command = "help"
-		}
-	} else if err == nil {
-		if target == "--" {
-			target = source
-		} else {
-			target = docu.Abs(target)
-			_, err = os.Stat(target)
-		}
+	if info, err = os.Stat(source); err != nil {
+		flagUsage(err.Error())
+	} else if command == "tree" && !info.IsDir() {
+		flagUsage("source must be existing directory")
 	}
 
-	if err != nil {
-		command = "help"
+	// 计算导入路径的偏移量
+	offset := posForImport(source)
+	if offset == -1 {
+		flagUsage("invalid source: " + source)
+	} else if target == "--" {
+		// 同目录输出
+		target = source[:offset]
+	} else {
+		target = docu.Abs(target)
 	}
-
 	if command == "tree" {
 		sub = true
+		if info, err = os.Stat(target); err != nil || !info.IsDir() {
+			flagUsage("target must be existing directory")
+		}
 	}
 
 	ch := make(chan interface{})
@@ -169,32 +252,14 @@ func main() {
 
 	switch command {
 	case "code", "plain":
-		if target == "--" {
-			pos := posForImport(source)
-			if pos == -1 {
-				<-ch
-				err = errors.New("invalid path: " + source)
-				break
-			}
-			if pos < len(source) {
-				target = source[:pos]
-			} else {
-				target = source
-			}
-		}
-		if lang == "" && target != "" {
-			err = errors.New("missing lang argument for output")
-		} else {
-			err = showMode(command, mode, ch, target, lang)
-		}
+		err = showMode(command, ch, offset, target, lib, lang, u)
 	case "tree":
 		// 对比目录结构
 		var d1 bool
-
 		prefix := fmt.Sprintf("source: %s\ntarget: %s\n\nsource target path\n",
 			source, target)
 
-		d1, err = treeMode(prefix, "  path  none ", "  path  file ", mode, ch, source, target)
+		d1, err = treeMode(prefix, "  path  none ", "  path  file ", ch, source, target)
 		if err != nil {
 			break
 		}
@@ -204,30 +269,24 @@ func main() {
 			prefix = ""
 		}
 
-		pos := posForImport(source)
-		if len(source) > pos {
-			target = filepath.Join(target, source[pos:])
-			source = source[:pos]
-		}
+		target = filepath.Join(target, source[offset:])
+		source = source[:offset]
 
 		ch = make(chan interface{})
 		go walkPath(ch, sub, target)
-		_, err = treeMode(prefix, "  none  path ", "  file  path ", mode, ch, target, source)
+		_, err = treeMode(prefix, "  none  path ", "  file  path ", ch, target, source)
 	case "first", "diff":
-		err = diffMode(command, mode, ch, source, target)
+		err = diffMode(command, ch, offset, target, lib, lang, u)
 	case "merge":
-		err = mergeMode(mode, ch, source, target, lang)
+		err = mergeMode(ch, offset, target, lib, lang)
+	case "replace":
+		err = replaceMode(ch, offset, target, lib, lang)
 	case "list":
-		pos := posForImport(source)
-		if pos != -1 {
-			err = listMode(ch, pos, target, lang)
-		} else {
-			err = errors.New("invalid path: " + source)
-		}
+		err = listMode(ch, offset, target, lib, lang, u)
 	case "tmpl":
 		tpl := template.New("Godocu").Funcs(docu.FuncsMap)
-		if tmpl != "" {
-			tpl, err = tpl.ParseFiles(tmpl)
+		if file != "" {
+			tpl, err = tpl.ParseFiles(file)
 		} else {
 			tpl, err = tpl.Parse(docu.DefaultTemplate)
 		}
@@ -236,11 +295,7 @@ func main() {
 			<-ch
 			break
 		}
-		err = tmplMode(tpl, mode, ch, target, lang)
-	default:
-		<-ch
-		close(ch)
-		flagUsage()
+		err = tmplMode(tpl, ch, offset, target, lib, lang, u)
 	}
 
 	close(ch)
@@ -250,25 +305,29 @@ func main() {
 }
 
 // 模板
-func tmplMode(tmpl *template.Template, mode docu.Mode, ch chan interface{}, target, lang string) (err error) {
-	var ok bool
-	var source string
-	var paths []string
-	var tu *docu.Docu
-	var output *os.File
-	fs := docu.Target(target)
+func tmplMode(tmpl *template.Template, ch chan interface{},
+	offset int, target, lib, lang string, u bool) (err error) {
+
 	var buf bytes.Buffer
 
-	// 先不要过滤
-	showUn := mode&docu.ShowUnexported != 0
-	mode |= docu.ShowUnexported
-	filter := docu.SuffixFilter("_" + lang + ".go")
+	var ok bool
+	var key, source, dst string
+	var paths []string
+	var output *os.File
+
 	out := false
 	du := docu.NewData()
+	du.Docu = docu.New()
+	du.Docu.Filter = genNameFilter(lib, "")
+
+	tu := docu.New()
+	if target != "" {
+		tu.Filter = genNameFilter(lib, lang)
+	}
+
 	for i := <-ch; i != nil; i = <-ch {
 		if err, ok = i.(error); !ok {
 			source = i.(string)
-			du.Docu = docu.New(mode)
 			paths, err = du.Parse(source, nil)
 		}
 		if err != nil {
@@ -279,59 +338,60 @@ func tmplMode(tmpl *template.Template, mode docu.Mode, ch chan interface{}, targ
 			continue
 		}
 
-		for i, key := range paths {
-			if i == 0 && target != "" {
-				if path := fs.NormalPath(key, lang, ".go"); path != "" {
-					// 载入全部目标包
-					tu = docu.New(mode)
-					tu.Filter = filter
-					_, err = tu.Parse(path, nil)
-					// 有可能老文件有错误
-					if err != nil {
-						err = nil
-					}
-				}
-			}
-			// 以目标过滤源, 否则无 showUnexported 时进行过滤.
-			norfile := tu.MergePackageFiles(key)
-			if norfile != nil && tu.NormalLang(key) == lang {
-				du.SetFilter(docu.SortDecl(norfile.Decls).Filter)
-			} else if !showUn {
-				du.SetFilter(docu.ExportedFileFilter)
-			} else {
-				du.SetFilter(nil)
-			}
+		key = paths[0]
 
-			buf.Truncate(0)
-			du.Key = key
-			err = tmpl.Execute(&buf, du)
-			if err != nil {
-				break
-			}
-			if du.Ext == "" {
-				continue
-			}
-			if out && target == "" {
-				_, err = os.Stdout.WriteString(sp)
-			}
-			output, err = fs.Create(key, lang, du.Ext)
-
-			if err != nil {
-				break
-			}
-			_, err = output.Write(buf.Bytes())
-			out = true
+		if !u {
 			if target != "" {
-				output.Close()
-			}
+				// 计算目标路径, 第一个可能是单文件
+				if dst == "" && strings.HasSuffix(source, ".go") {
+					source = filepath.Dir(source)
+				}
+				dst = filepath.Join(target, source[offset:])
 
-			if err != nil {
-				break
+				// 以目标过滤源
+				paths, _ = tu.Parse(dst, nil)
+				dis := tu.MergePackageFiles(key)
+				if dis != nil && paths[0] == key {
+					du.SetFilter(docu.SortDecl(dis.Decls).Filter)
+				} else {
+					du.SetFilter(docu.ExportedFileFilter)
+				}
+			} else {
+				du.SetFilter(docu.ExportedFileFilter)
 			}
 		}
+
+		buf.Truncate(0)
+
+		du.Key = key
+		if err = tmpl.Execute(&buf, du); err != nil {
+			break
+		}
+
+		if du.Ext == "" {
+			continue
+		}
+
+		output, err = createFile(dst, genFileName(lib, lang, du.Ext))
 		if err != nil {
 			break
 		}
+
+		if out && target == "" {
+			_, err = os.Stdout.WriteString(sp)
+		}
+		out = true
+		if err == nil {
+			_, err = output.Write(buf.Bytes())
+		}
+		if output != os.Stdout {
+			output.Close()
+		}
+
+		if err != nil {
+			break
+		}
+
 		ch <- nil
 	}
 	return
@@ -339,7 +399,7 @@ func tmplMode(tmpl *template.Template, mode docu.Mode, ch chan interface{}, targ
 
 // walkPath 通道类型约定:
 //   nil        结束
-//   string     待处理局对路径
+//   string     待处理绝对路径
 //   error      处理错误
 func walkPath(ch chan interface{}, sub bool, source string) {
 	if strings.HasSuffix(source, ".go") {
@@ -364,104 +424,120 @@ func walkPath(ch chan interface{}, sub bool, source string) {
 	ch <- nil
 }
 
-func showMode(command string, mode docu.Mode, ch chan interface{}, target, lang string) (err error) {
+func showMode(command string, ch chan interface{},
+	offset int, target, lib, lang string, u bool) (err error) {
+
 	var ok bool
-	var source string
+	var key, source, dst string
 	var paths []string
-	var du, tu *docu.Docu
 	var output *os.File
-	fs := docu.Target(target)
+
 	ext := ".go"
 	docgo := docu.DocGo
 	if command == "plain" {
 		docgo = docu.Godoc
 		ext = ".text"
 	}
-	// 先不要过滤
-	showUn := mode&docu.ShowUnexported != 0
-	mode |= docu.ShowUnexported
-
-	filter := docu.SuffixFilter("_" + lang + ".go")
 
 	out := false
+	du := docu.New()
+	du.Filter = genNameFilter(lib, "")
+
+	tu := docu.New()
+	if target != "" {
+		tu.Filter = genNameFilter(lib, lang)
+	}
+
+	fname := genFileName(lib, lang, ext)
+
 	for i := <-ch; i != nil; i = <-ch {
 		if err, ok = i.(error); !ok {
-			du = docu.New(mode)
 			source = i.(string)
 			paths, err = du.Parse(source, nil)
 		}
 		if err != nil {
 			break
 		}
+		if len(paths) == 0 {
+			ch <- nil
+			continue
+		}
 
-		for i, key := range paths {
-			file := du.MergePackageFiles(key)
-			if i == 0 && target != "" {
-				if path := fs.NormalPath(key, lang, ext); path != "" {
-					// 载入全部目标包
-					tu = docu.New(mode)
-					tu.Filter = filter
-					_, err = tu.Parse(path, nil)
-					// 有可能老文件有错误
-					if err != nil {
-						err = nil
-					}
+		key = paths[0]
+		file := du.MergePackageFiles(key)
+		if !u {
+			if target != "" {
+				// 计算目标路径, 第一个可能是单文件
+				if dst == "" && strings.HasSuffix(source, ".go") {
+					source = filepath.Dir(source)
 				}
-			}
+				dst = filepath.Join(target, source[offset:])
 
-			// 以目标过滤源, 否则无 showUnexported 时进行过滤.
-			norfile := tu.MergePackageFiles(key)
-			if norfile != nil && tu.NormalLang(key) == lang {
-				docu.SortDecl(norfile.Decls).Filter(file)
-			} else if !showUn {
+				// 以目标过滤源
+				paths, _ = tu.Parse(dst, nil)
+				dis := tu.MergePackageFiles(key)
+				if dis != nil && paths[0] == key {
+					docu.SortDecl(dis.Decls).Filter(file)
+				} else {
+					docu.ExportedFileFilter(file)
+				}
+
+				// 自动提取第一个 lang, 只是为了过滤
+				if dis != nil && lang == "" {
+					lang = tu.NormalLang(key)
+					tu.Filter = genNameFilter(lib, tu.NormalLang(key))
+					lang = "."
+				}
+
+			} else {
 				docu.ExportedFileFilter(file)
 			}
-
-			output, err = fs.Create(key, lang, ext)
-
-			if err == nil && out && target == "" {
-				_, err = os.Stdout.WriteString(sp)
-			}
-			out = true
-			if err == nil {
-				err = docgo(output, key, du.FileSet, file)
-			}
-			if target != "" {
-				output.Close()
-			}
-
-			if err != nil {
-				break
-			}
 		}
+
+		output, err = createFile(dst, fname)
 		if err != nil {
 			break
 		}
+
+		if out && target == "" {
+			_, err = os.Stdout.WriteString(sp)
+		}
+		out = true
+		if err == nil {
+			err = docgo(output, key, du.FileSet, file)
+		}
+
+		if output != os.Stdout {
+			output.Close()
+		}
+
+		if err != nil {
+			break
+		}
+
 		ch <- nil
 	}
 	return
 }
 
-func diffMode(command string, mode docu.Mode, ch chan interface{}, source, target string) (err error) {
+func diffMode(command string, ch chan interface{},
+	offset int, target, lib, lang string, u bool) (err error) {
+
 	var ok, diff bool
-	var paths, tpaths []string
-	var du, tu *docu.Docu
+	var key, source string
+	var paths []string
+	var output *os.File
 
-	pos := posForImport(source)
-	if pos == -1 {
-		<-ch
-		err = errors.New("invalid path: " + source)
-		return
-	}
-
-	output := os.Stdout
 	fileDiff := docu.FirstDiff
 	if command == "diff" {
 		fileDiff = docu.Diff
 	}
+	du, tu := docu.New(), docu.New()
+	du.Filter = genNameFilter(lib, "")
+	tu.Filter = genNameFilter(lib, lang)
+
 	for i := <-ch; i != nil; i = <-ch {
 		if err, ok = i.(error); !ok {
-			du = docu.New(mode)
 			source = i.(string)
 			paths, err = du.Parse(source, nil)
 		}
@@ -471,21 +547,20 @@ func diffMode(command string, mode docu.Mode, ch chan interface{}, source, targe
 
 		// 只对比相同的包. source 不能有错, target 的错误被忽略.
 		if len(paths) != 0 {
-			tu = docu.New(mode)
-			tpaths, err = tu.Parse(filepath.Join(target, source[pos:]), nil)
+			key = paths[0]
+			if strings.HasSuffix(source, ".go") {
+				source = filepath.Dir(source)
+			}
+			paths, err = tu.Parse(filepath.Join(target, source[offset:]), nil)
 		}
 
-		if len(paths) == 0 || len(tpaths) == 0 || err != nil {
+		if len(paths) == 0 || err != nil {
 			err = nil
 			ch <- nil
 			continue
 		}
-		tpath := "packages " + tpaths[0]
-		for i := 1; i < len(tpaths); i++ {
-			tpath += "," + tpaths[i]
-		}
 
-		diff, err = docu.TextDiff(output, "packages "+strings.Join(paths, ","), tpath)
+		diff, err = docu.TextDiff(output, "package "+key, "package "+paths[0])
 
 		if err != nil {
 			break
@@ -497,20 +572,26 @@ func diffMode(command string, mode docu.Mode, ch chan interface{}, source, targe
 			continue
 		}
 
-		for i, key := range paths {
-			diff, err = fileDiff(output, du.MergePackageFiles(key), tu.MergePackageFiles(tpaths[i]))
-			if diff && err == nil {
-				_, err = io.WriteString(output, "FROM: package ")
-				if err == nil {
-					_, err = io.WriteString(output, key)
-				}
-				if err == nil {
-					_, err = io.WriteString(output, sp)
-				}
+		src, dis := du.MergePackageFiles(key), tu.MergePackageFiles(key)
+		// 自动提取第一个 lang, 只是为了过滤
+		if dis != nil && lang == "" {
+			lang = tu.NormalLang(key)
+			tu.Filter = genNameFilter(lib, lang)
+			if lang == "" {
+				lang = "."
 			}
-			if err != nil {
-				break
-			}
+		}
+
+		if lang != "." {
+			docu.SortDecl(dis.Decls).Filter(src)
+		} else if !u {
+			docu.ExportedFileFilter(src)
+			docu.ExportedFileFilter(dis)
+		}
+
+		diff, err = fileDiff(output, src, dis)
+		if diff && err == nil {
+			_, err = io.WriteString(output, "FROM: package "+key)
 		}
 
 		if err != nil {
@@ -523,6 +604,9 @@ func diffMode(command string, mode docu.Mode, ch chan interface{}, source, targe
 
 // posForImport 计算 import paths 开始的偏移量
 func posForImport(s string) (pos int) {
+	if strings.HasSuffix(s, ".go") {
+		s = filepath.Dir(s)
+	}
 	if strings.HasSuffix(s, docu.SrcElem[:4]) {
 		return len(s) + 1
 	}
@@ -545,7 +629,7 @@ func posForImport(s string) (pos int) {
 	return -1
 }
 
-func treeMode(prefix, prenone, prefile string, mode docu.Mode, ch chan interface{}, source, target string) (diff bool, err error) {
+func treeMode(prefix, prenone, prefile string, ch chan interface{}, source, target string) (diff bool, err error) {
 	var fi os.FileInfo
 	pos := posForImport(source)
 	if pos == -1 {
@@ -585,108 +669,101 @@ func treeMode(prefix, prenone, prefile string, mode docu.Mode, ch chan interface
 	return
 }
 
-func mergeMode(mode docu.Mode, ch chan interface{}, source, target, lang string) (err error) {
-	var spaths, tpaths []string
-	var du, tu *docu.Docu
-	var fs docu.Target
+func mergeMode(ch chan interface{},
+	offset int, target, lib, lang string) (err error) {
+
+	var ok bool
+	var key, source, dst string
+	var paths []string
 	var output *os.File
 
-	pos := posForImport(source)
-	if pos == -1 {
-		<-ch
-		err = errors.New("invalid path: " + source)
-		return
-	}
+	out := false
+	du := docu.New()
+	du.Filter = genNameFilter(lib, "")
 
-	if lang == "" {
-		fs = docu.Target("")
-	} else {
-		fs = docu.Target(target)
-	}
+	tu := docu.New()
+	tu.Filter = genNameFilter(lib, lang)
+
+	fname := genFileName(lib, lang, ".go")
 
 	// 以 target 限制为过滤条件, 因此允许所有
 	for i := <-ch; i != nil; i = <-ch {
-		if err, _ = i.(error); err != nil {
-			break
+		if err, ok = i.(error); !ok {
+			source = i.(string)
+			paths, err = du.Parse(source, nil)
 		}
-		// 先得到目标
-		tu = docu.New(docu.ShowUnexported | docu.ShowCMD | docu.ShowTest)
-		source = i.(string)
-		tpaths, err = tu.Parse(filepath.Join(target, source[pos:]), nil)
-
-		// 计算 mode
-		mode = docu.ShowUnexported
-		for _, key := range tpaths {
-			key = docu.NormalPkgFileName(tu.Package(key))
-			if key == "" {
-				tpaths = nil
-				break
-			}
-			if strings.HasPrefix(key, "main") {
-				mode |= docu.ShowCMD
-			} else if strings.HasPrefix(key, "test") {
-				mode |= docu.ShowTest
-			}
-		}
-		if len(tpaths) == 0 {
-			err = nil
-			ch <- nil
-			continue
-		}
-
-		// 必须有相同的包才进行对比.
-		// source 不能有错, target 的错误被忽略.
-		du = docu.New(mode)
-		spaths, err = du.Parse(source, nil)
 		if err != nil {
 			break
 		}
-		if len(spaths) == 0 {
+		if len(paths) == 0 {
 			ch <- nil
 			continue
 		}
 
-		for _, key := range tpaths {
-			// 过滤掉非指定的语言
-			lan := tu.NormalLang(key)
-			if lang != "" && lang != lan {
-				continue
-			}
+		key = paths[0]
 
-			src := du.MergePackageFiles(key)
-			// 有可能 source 发生了变化
-			if src == nil {
-				err = errors.New("lost package " + key + ", on " + source)
+		// 计算目标路径, 第一个可能是单文件
+		if dst == "" && strings.HasSuffix(source, ".go") {
+			source = filepath.Dir(source)
+		}
+		dst = filepath.Join(target, source[offset:])
+
+		paths, _ = tu.Parse(filepath.Join(dst, fname), nil)
+		dis := tu.MergePackageFiles(key)
+
+		if dis == nil || len(paths) == 0 || paths[0] != key {
+			ch <- nil
+			continue
+		}
+
+		// 自动提取第一个 lang, 只是为了过滤
+		if lang == "" {
+			lang = tu.NormalLang(key)
+			if lang == "" {
+				err = errors.New("missing argument lang")
 				break
 			}
+			tu.Filter = genNameFilter(lib, lang)
+			output = os.Stdout
+			fname = genFileName(lib, lang, ".go")
+			lang = "."
+		}
 
-			dis := tu.MergePackageFiles(key)
-			// 总是以目标过滤源
-			docu.SortDecl(dis.Decls).Filter(src)
+		src := du.MergePackageFiles(key)
+		if len(dis.Imports) == 0 {
+			dis.Imports = src.Imports
+		}
 
-			if len(dis.Imports) == 0 {
-				dis.Imports = src.Imports
+		if src.Doc != nil {
+			if dis.Doc == nil {
+				dis.Doc = src.Doc
+			} else {
+				docu.MergeDoc(src.Doc, dis.Doc)
 			}
+		}
 
-			if src.Doc != nil {
-				if dis.Doc == nil {
-					dis.Doc = src.Doc
-				} else {
-					docu.MergeDoc(src.Doc, dis.Doc)
-				}
-			}
+		docu.MergeDecls(src.Decls, dis.Decls)
 
-			docu.MergeDecls(src.Decls, dis.Decls)
-			output, err = fs.Create(key, lan, ".go")
-			if err == nil {
-				err = docu.DocGo(output, key, tu.FileSet, dis)
-				if lang != "" {
-					output.Close()
-				}
+		if lang != "." {
+			output, err = createFile(dst, fname)
+		}
+
+		if err != nil {
+			break
+		}
+
+		if lang == "." {
+			if out {
+				_, err = os.Stdout.WriteString(sp)
 			}
-			if err != nil {
-				break
-			}
+			out = true
+		}
+
+		if err == nil {
+			err = docu.DocGo(output, key, tu.FileSet, dis)
+		}
+		if output != os.Stdout {
+			output.Close()
 		}
 
 		if err != nil {
@@ -697,14 +774,119 @@ func mergeMode(mode docu.Mode, ch chan interface{}, source, target, lang string)
 	return
 }
 
-func listMode(ch chan interface{}, pos int, target, lang string) (err error) {
+func replaceMode(ch chan interface{},
+	offset int, target, lib, lang string) (err error) {
+
+	var ok bool
+	var key, source, dst string
+	var paths []string
+
+	output := os.Stdout
+
+	out := false
+	du := docu.New()
+	du.Filter = genNameFilter(lib, lang)
+
+	tu := docu.New()
+	tu.Filter = du.Filter
+
+	fname := genFileName(lib, lang, ".go")
+
+	// 以 target 限制为过滤条件, 因此允许所有
+	for i := <-ch; i != nil; i = <-ch {
+		if err, ok = i.(error); !ok {
+			source = i.(string)
+			paths, err = du.Parse(source, nil)
+		}
+		if err != nil {
+			break
+		}
+		if len(paths) == 0 {
+			ch <- nil
+			continue
+		}
+
+		key = paths[0]
+
+		// 计算目标路径, 第一个可能是单文件
+		if dst == "" && strings.HasSuffix(source, ".go") {
+			source = filepath.Dir(source)
+		}
+		dst = filepath.Join(target, source[offset:])
+
+		paths, _ = tu.Parse(filepath.Join(dst, fname), nil)
+		dis := tu.MergePackageFiles(key)
+		if dis == nil || len(paths) == 0 || paths[0] != key {
+			ch <- nil
+			continue
+		}
+
+		src := du.MergePackageFiles(key)
+		if !docu.IsGodocuFile(src) || !docu.IsGodocuFile(dis) {
+			err = errors.New("source and target must be GodocuStyle documents")
+			break
+		}
+
+		// 自动提取第一个 lang, 只是为了过滤
+		if lang == "" {
+			lang = du.NormalLang(key)
+			if lang == "" || lang != tu.NormalLang(key) {
+				err = errors.New("missing argument lang")
+				break
+			}
+			du.Filter = genNameFilter(lib, lang)
+			tu.Filter = du.Filter
+			fname = genFileName(lib, lang, ".go")
+			lang = "."
+		}
+
+		docu.Replace(src, dis)
+
+		if len(dis.Imports) == 0 {
+			dis.Imports = src.Imports
+		}
+
+		if lang != "." {
+			output, err = createFile(dst, fname)
+		}
+
+		if err != nil {
+			break
+		}
+
+		if lang == "." {
+			if out {
+				_, err = os.Stdout.WriteString(sp)
+			}
+			out = true
+		}
+
+		if err == nil {
+			err = docu.DocGo(output, key, tu.FileSet, dis)
+		}
+
+		if output != os.Stdout {
+			output.Close()
+		}
+
+		if err != nil {
+			break
+		}
+		ch <- nil
+	}
+	return
+}
+
+func listMode(ch chan interface{}, offset int, target, lib, lang string, u bool) (err error) {
 	var ok bool
 	var source string
 	var paths []string
-	var du *docu.Docu
 	var list docu.List
-	var filter func(string) bool
 	var bs []byte
+
+	du := docu.New()
+	du.Filter = genNameFilter(lib, lang)
+	list.Filename = genFileName(lib, lang, ".go")
 
 	if target != "" {
 		info, err := os.Stat(target)
@@ -732,75 +914,53 @@ func listMode(ch chan interface{}, pos int, target, lang string) (err error) {
 			}
 		}
 		list.Package = nil
-	}
-
-	if lang == "" {
-		lang = list.Lang
-	} else {
-		list.Lang = lang
-	}
-
-	if lang != "" {
-		filter = docu.SuffixFilter("_" + lang + ".go")
+		if lang == "" {
+			lang = docu.LangOf(list.Filename)
+			list.Filename = genFileName(lib, lang, ".go")
+			du.Filter = genNameFilter(lib, lang)
+			lang = "."
+		}
 	}
 
 	for i := <-ch; i != nil; i = <-ch {
 		if err, ok = i.(error); !ok {
-			du = docu.New(docu.ShowUnexported | docu.ShowCMD | docu.ShowTest)
-			if filter != nil {
-				du.Filter = filter
-			}
 			source = i.(string)
 			paths, err = du.Parse(source, nil)
 		}
 		if err != nil {
-			return
+			break
 		}
+
 		if len(paths) == 0 {
 			// 简单预测官方包
-			if list.Repo == "" && filepath.Base(source) == "archive" {
-				list.Repo = "github.com/golang/go"
+			if list.Repo == "" {
+				if filepath.Base(source) == "archive" {
+					list.Repo = "github.com/golang/go"
+				}
 			}
 			ch <- nil
 			continue
 		}
-		// 因为 paths 已经排序, 取第一个就好
 		key := paths[0]
-		if filter == nil {
+		// 自动提取第一个 lang, 只是为了过滤
+		if lang == "" {
 			lang = du.NormalLang(key)
-			if lang == "" {
-				err = errors.New("invalid NormalLang in source: " + source)
-				return
-			}
-			filter = docu.SuffixFilter("_" + lang + ".go")
+			list.Filename = genFileName(lib, lang, ".go")
+			du.Filter = genNameFilter(lib, lang)
+			lang = "."
 		}
 
 		file := du.MergePackageFiles(key)
+
 		info := docu.Info{
 			Synopsis: doc.Synopsis(file.Doc.Text()),
 			Progress: docu.TranslationProgress(file),
 			Readme:   docu.LookReadme(source),
+			Import:   source[offset:],
 		}
-		// 非 std 包 import paths 需要重新计算
-		for i, key := range paths {
-			pos := strings.LastIndex(key, "::")
-			if i == 0 {
-				if pos == -1 {
-					info.Import = key
-				} else {
-					info.Import = key[:pos]
-				}
-			}
-			if pos == -1 {
-				continue
-			}
-			if info.Prefix == "" {
-				info.Prefix = key[pos+2:]
-			} else {
-				info.Prefix = "," + key[pos+2:]
-			}
-		}
+
 		list.Package = append(list.Package, info)
+
 		if list.Repo == "" {
 			// 官方包引向 github, 其它引向 "localhost"
 			imp := info.Import
@@ -809,47 +969,44 @@ func listMode(ch chan interface{}, pos int, target, lang string) (err error) {
 			} else if pos := strings.IndexByte(imp, '/'); pos != -1 {
 				imp = imp[:pos]
 			}
-			if list.Repo == "" && strings.IndexByte(imp, '.') == -1 {
-				list.Repo = "localhost"
-			} else if list.Repo == "" {
+			if list.Repo == "" && strings.IndexByte(imp, '.') != -1 {
 				for _, wh := range docu.Warehouse {
-					if !strings.HasPrefix(info.Import, wh.Host) || info.Import[len(wh.Host)] != '/' {
+					if wh.Host != imp {
 						continue
 					}
-					repo := info.Import
+					pos := 1
 					for i := 0; i < wh.Part; i++ {
-						pos := strings.IndexByte(repo[1:], '/') + 1
-						if pos == 0 {
-							list.Repo += repo
+						end := strings.IndexByte(info.Import[pos:], '/')
+						if end == -1 {
 							break
 						}
-						list.Repo += repo[:pos]
-						repo = repo[pos:]
+						pos += end + 1
 					}
+					list.Repo = info.Import[:pos-1]
 					break
 				}
-				if list.Repo == "" {
-					list.Repo = "localhost"
-				}
+			}
+			if list.Repo == "" {
+				list.Repo = "localhost"
 			}
 		}
-		if err != nil {
-			return
-		}
+
 		ch <- nil
 	}
 
-	bs, err = json.MarshalIndent(list, "", "    ")
 	if err == nil {
-		if target == "" {
+		bs, err = json.MarshalIndent(list, "", "    ")
+	}
+	if err == nil {
+		if target == "" || lang == "." {
 			_, err = os.Stdout.Write(bs)
-		} else {
-			var output *os.File
-			output, err = os.OpenFile(target, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
-			if err == nil {
-				_, err = output.Write(bs)
-				output.Close()
-			}
+			return
+		}
+		var output *os.File
+		output, err = os.OpenFile(target, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+		if err == nil {
+			_, err = output.Write(bs)
+			output.Close()
 		}
 	}
 	return

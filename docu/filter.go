@@ -9,24 +9,53 @@ import (
 	"strings"
 )
 
-// SuffixFilter 返回文件名后缀过滤函数. 例如 SuffixFilter("_zh_CN.go").
-func SuffixFilter(suffix string) func(string) bool {
-	if suffix == "_.go" {
-		suffix = ".go"
+var DefaultFilter = PackageFilter
+
+// PackageFilter 过滤掉 "main","test" 相关包, 过滤掉非 ".go" 文件.
+// 使用时应先过滤掉非 ".go" 的文件, 该函数才能正确工作
+func PackageFilter(name string) bool {
+	if name == "" || name[0] == '_' || name[0] == '.' ||
+		name == "main" || name == "test" || name == "main.go" || name == "test.go" {
+
+		return false
 	}
+
+	if strings.HasSuffix(name, ".go") {
+		return !strings.HasSuffix(name, "_test.go")
+	}
+	return strings.IndexByte(name, '.') == -1
+}
+
+// TestFilter 过滤掉非 "test" 相关的包和文件
+func TestFilter(name string) bool {
+	if name == "" || name[0] == '_' || name[0] == '.' {
+		return false
+	}
+	if strings.HasSuffix(name, ".go") {
+		return name == "test.go" || strings.HasSuffix(name, "_test.go")
+	}
+	return name != "main"
+}
+
+// MainFilter 过滤掉非 "main" 相关的包和文件
+func MainFilter(name string) bool {
+	if name == "" || name[0] == '_' || name[0] == '.' {
+		return false
+	}
+	if strings.HasSuffix(name, ".go") {
+		return name != "test.go" && !strings.HasSuffix(name, "_test.go")
+	}
+	return name == "main"
+}
+
+// GenNameFilter 返回一个过滤函数, 允许所有包名或 go 源文件名等于 filename 通过
+func GenNameFilter(filename string) func(string) bool {
 	return func(name string) bool {
-		return DefaultFilter(name) && strings.HasSuffix(name, suffix)
+		if name == "" || name[0] == '_' || name[0] == '.' {
+			return false
+		}
+		return filename == name || !strings.HasSuffix(name, ".go")
 	}
-}
-
-// DefaultFilter 缺省的文件名过滤规则. 过滤掉非 ".go" 和 "_test.go" 结尾的文件
-func DefaultFilter(name string) bool {
-	return ShowTestFilter(name) && !strings.HasSuffix(name, "_test.go")
-}
-
-// ShowTestFilter 允许 "_test.go" 结尾的文件
-func ShowTestFilter(name string) bool {
-	return len(name) > 0 && name[0] != '_' && name[0] != '.' && strings.HasSuffix(name, ".go")
 }
 
 // ExportedFileFilter 剔除 non-nil file 中所有非导出声明, 返回该 file 是否具有导出声明.
@@ -110,8 +139,14 @@ func exportedSpecFilter(spec ast.Spec, by SortDecl) bool {
 			//		ModeARM
 			//		ModeThumb
 			//	)
+			//
+			// 和 syscall SOL_SOCKET
+			// const (
+			// 		_ = iota
+			// 		SOL_SOCKET
+			// )
 			if n.Names[i].IsExported() ||
-				i == 0 && n.Type != nil && len(n.Names) == 1 && n.Names[0].Name == "_" {
+				i == 0 && len(n.Names) == 1 && n.Names[0].Name == "_" {
 				i++
 				continue
 			}

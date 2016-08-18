@@ -50,6 +50,30 @@ func IsNormalLang(lang string) bool {
 	return true
 }
 
+// LangOf 返回 Godocu  命名风格的 name 中的 lang 部分.
+// 如果 name 不符合 Godocu 命名风格返回空.
+func LangOf(name string) string {
+	pos := strings.IndexByte(name, '.')
+	if pos == -1 {
+		return ""
+	}
+	name = name[:pos]
+
+	pos = strings.IndexByte(name, '_')
+	if pos == -1 {
+		return ""
+	}
+	switch name[:pos] {
+	default:
+		return ""
+	case "doc", "main", "test":
+	}
+	if !IsNormalLang(name[pos+1:]) {
+		return ""
+	}
+	return name[pos+1:]
+}
+
 // LangNormal 对 lang 进行检查并格式化.
 // 如果 lang 不符合要求, 返回空字符串.
 func LangNormal(lang string) string {
@@ -140,6 +164,45 @@ func LookImportPath(abs string) string {
 	}
 
 	return ""
+}
+
+// IsOSArchFile 返回 name 是否为特定平台文件命名
+//     name_$(GOOS).*
+//     name_$(GOARCH).*
+//     name_$(GOOS)_$(GOARCH).*
+//     name_$(GOOS)_test.*
+//     name_$(GOARCH)_test.*
+//     name_$(GOOS)_$(GOARCH)_test.*
+func IsOSArchFile(name string) bool {
+	if dot := strings.Index(name, "."); dot != -1 {
+		name = name[:dot]
+	}
+	i := strings.IndexByte(name, '_')
+	if i < 0 {
+		return false
+	}
+
+	l := strings.Split(name[i:], "_")
+	if n := len(l); n > 0 && l[n-1] == "test" {
+		l = l[:n-1]
+	}
+
+	if len(l) >= 2 {
+		return contains(goosList, l[0]) && contains(goarchList, l[1])
+	}
+	return contains(goosList, l[0]) || contains(goarchList, l[0])
+}
+
+func contains(s, sep string) bool {
+	pos := strings.Index(s, sep)
+	if pos == -1 {
+		return false
+	}
+	if pos == 0 {
+		return s[pos+len(sep)] == ' '
+	}
+	return s[pos-1] == ' ' && (len(s) == len(sep)+pos ||
+		s[pos+len(sep)+1] == ' ')
 }
 
 // Target 创建(覆盖)统一风格的本地文件.
