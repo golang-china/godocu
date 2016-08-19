@@ -901,14 +901,16 @@ func listMode(ch chan interface{}, offset int, target, lib, lang string, u bool)
 		bs, _ = ioutil.ReadFile(target)
 		// 提取现有属性
 		if bs != nil {
-			json.Unmarshal(bs, &list)
+			err = json.Unmarshal(bs, &list)
+			if err != nil {
+				return err
+			}
 		}
 
 		if list.Readme == "" {
-			list.Readme = docu.LookReadme(target)
-		}
-		if list.Readme != "" {
-			info, err := os.Lstat(filepath.Join(target, list.Readme))
+			list.Readme = docu.LookReadme(filepath.Dir(target))
+		} else {
+			info, err := os.Lstat(filepath.Join(filepath.Dir(target), list.Readme))
 			if err != nil || info.IsDir() {
 				return errors.New("invalid readme file: " + list.Readme)
 			}

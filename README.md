@@ -351,18 +351,18 @@ type List struct {
 
   // Description 一句话介绍 Repo 或列表
   // Readme 整个 list 的 readme 文件名
-  Description, Readme string `json:"omitempty"`
+  Description, Readme string `json:",omitempty"`
 
   // 文档文件名
   Filename string
   // Ext 表示除 "go" 格式文档之外的扩展名.
   // 例如: "md text"
   // 该值由使用者手工设置, Godocu 只是保留它.
-  Ext string `json:"omitempty"`
+  Ext string `json:",omitempty"`
 
   // Subdir 表示文档文件位于 golist.json 所在目录那个子目录.
   // 该值由使用者手工设置, Godocu 只是保留它.
-  Subdir string `json:"omitempty"`
+  Subdir string `json:",omitempty"`
 
   Package []Info // 所有包的信息
 }
@@ -372,7 +372,7 @@ type Info struct {
   Import   string // 导入路径
   Synopsis string // 一句话包摘要
   // Readme 该包下 readme 文件名
-  Readme   string `json:"omitempty"`
+  Readme   string `json:",omitempty"`
   Progress int    // 翻译完成度
 }
 ```
