@@ -62,7 +62,35 @@ func TranslationProgress(file *ast.File) int {
 			if n.Tok == token.IMPORT {
 				continue
 			}
-			doc = n.Doc
+			if !n.Lparen.IsValid() {
+				doc = n.Doc
+				break
+			}
+			for _, spec := range n.Specs {
+				if spec == nil {
+					continue
+				}
+				switch n.Tok {
+				case token.VAR, token.CONST:
+					s, _ := spec.(*ast.ValueSpec)
+					doc = s.Doc
+				case token.TYPE:
+					s, _ := spec.(*ast.TypeSpec)
+					doc = s.Doc
+				}
+				if doc == nil {
+					continue
+				}
+				origin++
+				pos := findCommentPrev(doc.Pos()-6, comments)
+				if pos != -1 {
+					if !equalComment(doc, comments[pos]) {
+						trans++
+					}
+					comments = comments[pos+1:]
+				}
+			}
+			continue
 		case *ast.FuncDecl:
 			doc = n.Doc
 		default:

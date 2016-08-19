@@ -43,33 +43,59 @@ func Replace(target, source *ast.File) {
 
 // replaceGenDecls 负责 ValueSpec, TypeSpec
 func replaceGenDecls(dst, src *ast.File, target, source []ast.Decl) {
-	ss := SortDecl(source)
-	dd := SortDecl(target)
-	if ss.Len() == 0 || dd.Len() == 0 {
+	var targ ast.Decl
+
+	if len(source) == 0 || len(target) == 0 {
 		return
 	}
+	dd := SortDecl(target)
 
 	var lit string
-	for _, node := range ss {
+
+	for _, node := range source {
 		decl := node.(*ast.GenDecl)
 		if decl.Tok == token.IMPORT ||
 			decl.Doc == nil || len(decl.Doc.List) == 0 {
 			continue
 		}
+		targ = nil
+		for _, spec := range decl.Specs {
+			lit = SpecIdentLit(spec)
+			replaceSpec(decl.Tok, dst, src, dd.SearchSpec(lit), spec)
+			if targ == nil {
+				targ = dd.Search(lit)
+			}
+		}
 
-		lit = DeclIdentLit(decl)
-		targ := dd.Search(lit)
 		if targ == nil {
 			continue
 		}
 
-		tdecl, ok := targ.(*ast.GenDecl)
-		if !ok || len(decl.Specs) == 0 || len(tdecl.Specs) == 0 {
+		tdecl, _ := targ.(*ast.GenDecl)
+		if tdecl == nil || len(decl.Specs) == 0 || len(tdecl.Specs) == 0 {
 			continue
 		}
+
 		replaceDoc(dst, src, tdecl.Doc, decl.Doc)
 	}
 	return
+}
+
+func replaceSpec(tok token.Token, dst, src *ast.File, target, source ast.Spec) {
+	if source == nil || target == nil {
+		return
+	}
+	switch tok {
+	case token.VAR, token.CONST:
+		s, _ := source.(*ast.ValueSpec)
+		d, _ := target.(*ast.ValueSpec)
+
+		replaceDoc(dst, src, d.Doc, s.Doc)
+	case token.TYPE:
+		s, _ := source.(*ast.TypeSpec)
+		d, _ := target.(*ast.TypeSpec)
+		replaceDoc(dst, src, d.Doc, s.Doc)
+	}
 }
 
 func replaceDoc(dst, src *ast.File, target, source *ast.CommentGroup) {
