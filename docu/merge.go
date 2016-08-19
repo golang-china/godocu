@@ -10,12 +10,12 @@ const GoDocu_Dividing_line = "___GoDocu_Dividing_line___"
 // do not change this
 var comment_Dividing_line = &ast.Comment{Text: "//___GoDocu_Dividing_line___"}
 
-// MergeDecls 插入(合并) source,target 中相匹配的 Ident 的文档到 target 注释顶部.
+// MergeDeclsDoc 插入(合并) source,target 中相匹配的 Ident 的文档到 target 注释顶部.
 // 细节:
 //    忽略 ImportSpec
 //    只是排版不同不会被合并
 //    插入分隔占位字符串 ___GoDocu_Dividing_line___
-func MergeDecls(source, target []ast.Decl) {
+func MergeDeclsDoc(source, target []ast.Decl) {
 	sd, so := declsOf(ConstNum, source, 0)
 	dd, do := declsOf(ConstNum, target, 0)
 	mergeGenDecls(sd, dd)
@@ -42,41 +42,74 @@ func MergeDecls(source, target []ast.Decl) {
 
 // mergeGenDecls 负责 ValueSpec, TypeSpec
 func mergeGenDecls(source, target []ast.Decl) {
-	ss := SortDecl(source)
-	dd := SortDecl(target)
-	if ss.Len() == 0 || dd.Len() == 0 {
+	var targ ast.Decl
+
+	if len(source) == 0 || len(target) == 0 {
 		return
 	}
+	dd := SortDecl(target)
 
 	var lit string
-	for _, node := range ss {
+
+	for _, node := range source {
 		decl := node.(*ast.GenDecl)
 		if decl.Tok == token.IMPORT ||
 			decl.Doc == nil || len(decl.Doc.List) == 0 {
 			continue
 		}
+		targ = nil
+		for _, spec := range decl.Specs {
+			lit = SpecIdentLit(spec)
+			mergeSpec(decl.Tok, spec, dd.SearchSpec(lit))
+			if targ == nil {
+				targ = dd.Search(lit)
+			}
+		}
 
-		lit = DeclIdentLit(decl)
-		targ := dd.Search(lit)
 		if targ == nil {
 			continue
 		}
-		tdecl, ok := targ.(*ast.GenDecl)
-		if !ok || len(decl.Specs) == 0 || len(tdecl.Specs) == 0 {
+
+		tdecl, _ := targ.(*ast.GenDecl)
+		if tdecl == nil {
 			continue
 		}
+
 		if tdecl.Doc == nil || len(tdecl.Doc.List) == 0 {
 			tdecl.Doc = decl.Doc
 			continue
 		}
-
-		sdoc, ddoc := decl.Doc.Text(), tdecl.Doc.Text()
-		if sdoc == ddoc || lineString(sdoc) == lineString(ddoc) {
-			continue
+		if !equalComment(decl.Doc, tdecl.Doc) {
+			MergeDoc(decl.Doc, tdecl.Doc)
 		}
-		MergeDoc(decl.Doc, tdecl.Doc)
 	}
 	return
+}
+
+func mergeSpec(tok token.Token, source, target ast.Spec) {
+	if source == nil || target == nil {
+		return
+	}
+	switch tok {
+	case token.VAR, token.CONST:
+		src, _ := source.(*ast.ValueSpec)
+		dst, _ := target.(*ast.ValueSpec)
+		if src == nil || dst == nil ||
+			src.Doc == nil || dst.Doc == nil ||
+			equalComment(src.Doc, dst.Doc) {
+			return
+		}
+		MergeDoc(src.Doc, dst.Doc)
+	case token.TYPE:
+		src, _ := source.(*ast.TypeSpec)
+		dst, _ := target.(*ast.TypeSpec)
+		if src == nil || dst == nil ||
+			src.Doc == nil || dst.Doc == nil ||
+			equalComment(src.Doc, dst.Doc) {
+			return
+		}
+		MergeDoc(src.Doc, dst.Doc)
+	}
 }
 
 // MergeDoc 合并 source.List 到 target.list 顶部.

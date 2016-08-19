@@ -37,7 +37,7 @@ func ToSource(output io.Writer, text string) error {
 	return FormatComments(output, text, "// ", 77)
 }
 
-func formatTrans(output io.Writer,
+func formatTrans(output io.Writer, prefix string, limit int,
 	trans *ast.CommentGroup, comments []*ast.CommentGroup) (err error) {
 	if trans == nil {
 		return fprint(output, nl)
@@ -45,19 +45,19 @@ func formatTrans(output io.Writer,
 	// 兼容 merge 造成的问题
 	text := trans.Text()
 	if comments == nil || strings.Index(text, GoDocu_Dividing_line) != -1 {
-		return ToSource(output, text)
+		return FormatComments(output, text, prefix, limit)
 	}
 
 	pos := findCommentPrev(trans.Pos()-2, comments)
 	if pos != -1 {
-		err = ToSource(output, comments[pos].Text())
+		err = FormatComments(output, comments[pos].Text(), prefix, limit)
 		if err == nil {
 			err = fprint(output, nl)
 		}
 	}
 
 	if err == nil {
-		err = ToSource(output, text)
+		err = FormatComments(output, text, prefix, limit)
 	}
 	return
 }
@@ -512,8 +512,9 @@ func Godoc(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 			}
 			continue
 		}
+
 		genDecl := decl.(*ast.GenDecl)
-		if len(genDecl.Specs) == 0 {
+		if genDecl == nil || len(genDecl.Specs) == 0 {
 			continue
 		}
 
@@ -564,6 +565,10 @@ func Godoc(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 func DocGo(output io.Writer, paths string, fset *token.FileSet, file *ast.File) (err error) {
 	var text string
 	var comments []*ast.CommentGroup
+	var vs *ast.ValueSpec
+	var ts *ast.TypeSpec
+	var doc *ast.CommentGroup
+
 	if IsGodocuFile(file) {
 		comments = file.Comments
 	}
@@ -578,7 +583,7 @@ func DocGo(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 	}
 
 	if err == nil && file.Doc != nil {
-		err = formatTrans(output, file.Doc, comments)
+		err = formatTrans(output, "// ", 77, file.Doc, comments)
 	}
 	if err != nil {
 		return
@@ -616,7 +621,7 @@ func DocGo(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 		if num == FuncNum || num == MethodNum {
 			fdecl := decl.(*ast.FuncDecl)
 			if fdecl.Doc != nil {
-				if err = formatTrans(output, fdecl.Doc, comments); err != nil {
+				if err = formatTrans(output, "// ", 77, fdecl.Doc, comments); err != nil {
 					return
 				}
 			}
@@ -628,23 +633,83 @@ func DocGo(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 			}
 			continue
 		}
-		genDecl := decl.(*ast.GenDecl)
-		if len(genDecl.Specs) == 0 {
+		genDecl, _ := decl.(*ast.GenDecl)
+		if genDecl == nil || len(genDecl.Specs) == 0 {
 			continue
 		}
 
-		docGroup := genDecl.Doc
-		genDecl.Doc = nil
-		if err = formatTrans(output, docGroup, comments); err != nil {
+		if err = formatTrans(output, "// ", 77, genDecl.Doc, comments); err != nil {
 			return
 		}
-		if err = config.Fprint(output, fset, genDecl); err != nil {
-			return
+
+		limit := 77
+		s := ""
+		switch genDecl.Tok {
+		case token.VAR:
+			s = "var "
+		case token.CONST:
+			s = "const "
+		case token.TYPE:
+			s = "type "
 		}
+		if genDecl.Lparen.IsValid() {
+			err = fprint(output, s, "(", nl)
+			s = "    // "
+			limit = 73
+		} else {
+			err = fprint(output, s)
+			s = "// "
+		}
+		out := false
+		for _, spec := range genDecl.Specs {
+			if spec == nil {
+				continue
+			}
+
+			switch genDecl.Tok {
+			case token.VAR, token.CONST:
+				vs, _ = spec.(*ast.ValueSpec)
+				doc, vs.Doc = vs.Doc, nil
+			case token.TYPE:
+				ts, _ = spec.(*ast.TypeSpec)
+				doc, ts.Doc = ts.Doc, nil
+			}
+			if out {
+				if err = fprint(output, nl+nl); err != nil {
+					return
+				}
+			}
+			out = true
+			if doc != nil && len(doc.List) != 0 {
+				if err = formatTrans(output, s, limit, doc, comments); err != nil {
+					return
+				}
+			}
+
+			if limit == 73 {
+				if err = fprint(output, "    "); err != nil {
+					return
+				}
+			}
+
+			if err = config.Fprint(output, fset, spec); err != nil {
+				return
+			}
+			switch genDecl.Tok {
+			case token.VAR, token.CONST:
+				vs.Doc = doc
+			case token.TYPE:
+				ts.Doc = doc
+			}
+		}
+
+		if genDecl.Lparen.IsValid() {
+			err = fprint(output, nl, ")", nl)
+		}
+
 		if err = fprint(output, nl+nl); err != nil {
 			return
 		}
-		genDecl.Doc = docGroup
 	}
 
 	return

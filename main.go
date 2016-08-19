@@ -742,7 +742,7 @@ func mergeMode(ch chan interface{},
 			}
 		}
 
-		docu.MergeDecls(src.Decls, dis.Decls)
+		docu.MergeDeclsDoc(src.Decls, dis.Decls)
 
 		if lang != "." {
 			output, err = createFile(dst, fname)
