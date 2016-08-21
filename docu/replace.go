@@ -43,7 +43,7 @@ func Replace(target, source *ast.File) {
 
 // replaceGenDecls 负责 ValueSpec, TypeSpec
 func replaceGenDecls(dst, src *ast.File, target, source []ast.Decl) {
-	var targ ast.Decl
+	var tdecl *ast.GenDecl
 
 	if len(source) == 0 || len(target) == 0 {
 		return
@@ -54,28 +54,29 @@ func replaceGenDecls(dst, src *ast.File, target, source []ast.Decl) {
 
 	for _, node := range source {
 		decl := node.(*ast.GenDecl)
-		if decl.Tok == token.IMPORT ||
-			decl.Doc == nil || len(decl.Doc.List) == 0 {
+		if decl.Tok == token.IMPORT || len(decl.Specs) == 0 {
 			continue
 		}
-		targ = nil
+		tdecl = nil
 		for _, spec := range decl.Specs {
 			lit = SpecIdentLit(spec)
-			replaceSpec(decl.Tok, dst, src, dd.SearchSpec(lit), spec)
-			if targ == nil {
-				targ = dd.Search(lit)
+			if lit == "_" {
+				continue
 			}
+			if tdecl == nil {
+				targ := dd.Search(lit)
+				if targ != nil {
+					tdecl = targ.(*ast.GenDecl)
+				}
+			}
+			dspec, _, _ := dd.SearchSpec(lit)
+			replaceSpec(decl.Tok, dst, src, dspec, spec)
 		}
 
-		if targ == nil {
-			continue
-		}
-
-		tdecl, _ := targ.(*ast.GenDecl)
 		if tdecl == nil || len(decl.Specs) == 0 || len(tdecl.Specs) == 0 {
 			continue
 		}
-
+		// 此代码兼容 无分组情况
 		replaceDoc(dst, src, tdecl.Doc, decl.Doc)
 	}
 	return
@@ -99,15 +100,14 @@ func replaceSpec(tok token.Token, dst, src *ast.File, target, source ast.Spec) {
 }
 
 func replaceDoc(dst, src *ast.File, target, source *ast.CommentGroup) {
-	var so, do *ast.CommentGroup
-
-	so = transOrigin(src, source)
-	if so == nil || equalComment(so, source) {
+	// source 必须要有翻译, 才可能替换
+	if equalComment(source, target) || transOrigin(src, source) == nil {
 		return
 	}
-
-	do = transOrigin(dst, target)
-	if do == nil || !equalComment(do, target) {
+	// target 目标没有翻译, 采用合并
+	if transOrigin(dst, target) == nil {
+		MergeDoc(target, source)
+		target.List = source.List
 		return
 	}
 	ReplaceDoc(target, source)

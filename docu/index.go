@@ -172,22 +172,25 @@ func isConstructor(n *ast.FuncDecl, typeLit string) bool {
 	return false
 }
 
-// SearchSpec 查找 specIdentLit 对应的 ast.Spec.
-func (s SortDecl) SearchSpec(specIdentLit string) ast.Spec {
+// SearchSpec 查找 specIdentLit 对应的顶级 ast.Spec 和所在 *ast.GenDecl 以及索引.
+func (s SortDecl) SearchSpec(specIdentLit string) (ast.Spec, *ast.GenDecl, int) {
 	if specIdentLit == "" || specIdentLit == "<nil>" {
-		return nil
+		return nil, nil, -1
 	}
 	for _, node := range s {
 		switch n := node.(type) {
 		case *ast.GenDecl:
-			for _, spec := range n.Specs {
+			if n.Tok == token.IMPORT {
+				break
+			}
+			for i, spec := range n.Specs {
 				if SpecIdentLit(spec) == specIdentLit {
-					return spec
+					return spec, n, i
 				}
 			}
 		}
 	}
-	return nil
+	return nil, nil, -1
 }
 
 // Filter 过滤掉 file 中的非导出顶级声明, 如果该声明不在 s 中的话.

@@ -10,11 +10,11 @@ const GoDocu_Dividing_line = "___GoDocu_Dividing_line___"
 // do not change this
 var comment_Dividing_line = &ast.Comment{Text: "//___GoDocu_Dividing_line___"}
 
-// MergeDeclsDoc 插入(合并) source,target 中相匹配的 Ident 的文档到 target 注释顶部.
+// MergeDeclsDoc 合并 source 与 target 中匹配的标识符文档到 target 注释底部
 // 细节:
 //    忽略 ImportSpec
 //    只是排版不同不会被合并
-//    插入分隔占位字符串 ___GoDocu_Dividing_line___
+//    target 应该具有良好的结构, 比如来自源代码
 func MergeDeclsDoc(source, target []ast.Decl) {
 	sd, so := declsOf(ConstNum, source, 0)
 	dd, do := declsOf(ConstNum, target, 0)
@@ -42,88 +42,54 @@ func MergeDeclsDoc(source, target []ast.Decl) {
 
 // mergeGenDecls 负责 ValueSpec, TypeSpec
 func mergeGenDecls(source, target []ast.Decl) {
-	var targ ast.Decl
-
+	var lit string
+	var sdoc, tdoc *ast.CommentGroup
 	if len(source) == 0 || len(target) == 0 {
 		return
 	}
 	dd := SortDecl(target)
 
-	var lit string
-
 	for _, node := range source {
 		decl := node.(*ast.GenDecl)
-		if decl.Tok == token.IMPORT ||
-			decl.Doc == nil || len(decl.Doc.List) == 0 {
-			continue
-		}
-		targ = nil
 		for _, spec := range decl.Specs {
 			lit = SpecIdentLit(spec)
-			mergeSpec(decl.Tok, spec, dd.SearchSpec(lit))
-			if targ == nil {
-				targ = dd.Search(lit)
+			if lit == "_" {
+				continue
 			}
-		}
+			tspec, tdecl, _ := dd.SearchSpec(lit)
+			if tspec == nil {
+				continue
+			}
 
-		if targ == nil {
-			continue
-		}
+			if decl.Lparen.IsValid() {
+				sdoc = SpecDoc(spec)
+			} else {
+				sdoc = decl.Doc
+			}
 
-		tdecl, _ := targ.(*ast.GenDecl)
-		if tdecl == nil {
-			continue
-		}
+			if tdecl.Lparen.IsValid() {
+				tdoc = SpecDoc(tspec)
+			} else {
+				tdoc = tdecl.Doc
+			}
 
-		if tdecl.Doc == nil || len(tdecl.Doc.List) == 0 {
-			tdecl.Doc = decl.Doc
-			continue
-		}
-		if !equalComment(decl.Doc, tdecl.Doc) {
-			MergeDoc(decl.Doc, tdecl.Doc)
+			if sdoc == nil || tdoc == nil || equalComment(sdoc, tdoc) {
+				continue
+			}
+			MergeDoc(sdoc, tdoc)
 		}
 	}
 	return
 }
 
-func mergeSpec(tok token.Token, source, target ast.Spec) {
-	if source == nil || target == nil {
-		return
-	}
-	switch tok {
-	case token.VAR, token.CONST:
-		src, _ := source.(*ast.ValueSpec)
-		dst, _ := target.(*ast.ValueSpec)
-		if src == nil || dst == nil ||
-			src.Doc == nil || dst.Doc == nil ||
-			equalComment(src.Doc, dst.Doc) {
-			return
-		}
-		MergeDoc(src.Doc, dst.Doc)
-	case token.TYPE:
-		src, _ := source.(*ast.TypeSpec)
-		dst, _ := target.(*ast.TypeSpec)
-		if src == nil || dst == nil ||
-			src.Doc == nil || dst.Doc == nil ||
-			equalComment(src.Doc, dst.Doc) {
-			return
-		}
-		MergeDoc(src.Doc, dst.Doc)
-	}
-}
-
-// MergeDoc 合并 source.List 到 target.list 顶部.
+// MergeDoc 合并 source.List 到 target.list 底部.
 // 保持 target.Pos(), target.End() 不变
+// 插入分隔占位字符串 ___GoDocu_Dividing_line___
 func MergeDoc(source, target *ast.CommentGroup) {
-	pos, end := target.Pos(), target.End()
-	list := target.List
-	target.List = make([]*ast.Comment, 0, len(source.List)+len(list)+1)
-	target.List = append(target.List, source.List...)
+	end := target.End()
 	target.List = append(target.List, comment_Dividing_line)
-	target.List = append(target.List, list...)
-	cg := target.List[0]
-	cg.Slash = pos
-	cg = target.List[len(target.List)-1]
+	target.List = append(target.List, source.List...)
+	cg := target.List[len(target.List)-1]
 	cg.Slash = token.Pos(int(end) - len(cg.Text))
 }
 
@@ -137,26 +103,13 @@ func mergeFuncDecls(source, target []ast.Decl) {
 	var lit string
 	for _, node := range ss {
 		decl := node.(*ast.FuncDecl)
-		if decl.Doc == nil || len(decl.Doc.List) == 0 {
+		if decl == nil || decl.Doc == nil {
 			continue
 		}
 
 		lit = FuncIdentLit(decl)
-		targ := dd.Search(lit)
-		if targ == nil {
-			continue
-		}
-		tdecl, ok := targ.(*ast.FuncDecl)
-		if !ok {
-			continue
-		}
-		if tdecl.Doc == nil || len(tdecl.Doc.List) == 0 {
-			tdecl.Doc = decl.Doc
-			continue
-		}
-
-		sdoc, ddoc := decl.Doc.Text(), tdecl.Doc.Text()
-		if sdoc == ddoc || lineString(sdoc) == lineString(ddoc) {
+		tdecl := dd.SearchFunc(lit)
+		if tdecl == nil || tdecl.Doc == nil || equalComment(decl.Doc, tdecl.Doc) {
 			continue
 		}
 		MergeDoc(decl.Doc, tdecl.Doc)

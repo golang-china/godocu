@@ -128,7 +128,7 @@ func LookReadme(path string) string {
 		if !strings.HasSuffix(name, ".go") &&
 			strings.HasPrefix(strings.ToLower(name), "readme") {
 			info, err := os.Lstat(filepath.Join(path, name))
-			if err != nil && !info.IsDir() {
+			if err == nil && !info.IsDir() {
 				return name
 			}
 		}
@@ -182,7 +182,7 @@ func IsOSArchFile(name string) bool {
 		return false
 	}
 
-	l := strings.Split(name[i:], "_")
+	l := strings.Split(name[i+1:], "_")
 	if n := len(l); n > 0 && l[n-1] == "test" {
 		l = l[:n-1]
 	}
@@ -193,16 +193,40 @@ func IsOSArchFile(name string) bool {
 	return contains(goosList, l[0]) || contains(goarchList, l[0])
 }
 
+// IsOSArchFileEx 返回 name 是否为 goos, goarch 之外的平台文件命名
+func IsOSArchFileEx(name, goos, goarch string) bool {
+	if dot := strings.Index(name, "."); dot != -1 {
+		name = name[:dot]
+	}
+	i := strings.IndexByte(name, '_')
+	if i < 0 {
+		return false
+	}
+
+	l := strings.Split(name[i+1:], "_")
+	if n := len(l); n > 0 && l[n-1] == "test" {
+		l = l[:n-1]
+	}
+	if len(l) >= 2 {
+		if l[0] == goos && l[1] == goarch {
+			return false
+		}
+		return contains(goosList, l[0]) && contains(goarchList, l[1])
+	}
+	if l[0] == goos || l[0] == goarch {
+		return false
+	}
+
+	return contains(goosList, l[0]) || contains(goarchList, l[0])
+}
+
 func contains(s, sep string) bool {
 	pos := strings.Index(s, sep)
 	if pos == -1 {
 		return false
 	}
-	if pos == 0 {
-		return s[pos+len(sep)] == ' '
-	}
-	return s[pos-1] == ' ' && (len(s) == len(sep)+pos ||
-		s[pos+len(sep)+1] == ' ')
+
+	return s[pos+len(sep)] == ' '
 }
 
 // Target 创建(覆盖)统一风格的本地文件.

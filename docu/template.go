@@ -124,7 +124,7 @@ var FuncsMap = template.FuncMap{
 	"prevComment": func(comments []*ast.CommentGroup, pos token.Pos) *ast.CommentGroup {
 		// prevComment 在 comments 中查找 pos 的上一个 CommentGroup.
 		// 返回 nil 表示未找到.
-		i := findCommentPrev(pos-2, comments)
+		i := findCommentPrev(pos, comments)
 		if i == -1 {
 			return nil
 		}

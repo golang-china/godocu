@@ -21,3 +21,31 @@ func TestIsNormalName(t *testing.T) {
 		}
 	}
 }
+
+func TestContains(t *testing.T) {
+	tests := []struct {
+		s   string
+		sep string
+	}{
+		{goarchList, "s390x"},
+		{goosList, "android"},
+		{goosList, "windows"},
+	}
+	for _, tt := range tests {
+		if !contains(tt.s, tt.sep) {
+			t.Errorf("contains(%q,%q)", tt.s, tt.sep)
+		}
+	}
+}
+
+func TestIsOSArchFile(t *testing.T) {
+	tests := []string{
+		"zsyscall_linux_s390x.go",
+		"doc_linux.go",
+	}
+	for _, name := range tests {
+		if !IsOSArchFile(name) {
+			t.Errorf("IsOSArchFile(%q)", name)
+		}
+	}
+}

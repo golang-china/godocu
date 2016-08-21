@@ -81,7 +81,7 @@ func TestLineWrapper(t *testing.T) {
 
 func BenchmarkDocu_Parse(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		du := New(0)
+		du := New()
 		du.Parse("go/types", nil)
 	}
 }

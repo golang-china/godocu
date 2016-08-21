@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// DeclIdentLit 返回返 decl 的 Ident 字面描述.
+// DeclIdentLit 返回返 decl 第一个 ast.Spec 的 Ident 字面描述.
 // 如果是 method, 返回风格为 RecvIdentLit.FuncName.
 // 如果是 GenDecl 只返回第一个 Spec 的 Ident 字面描述
 func DeclIdentLit(decl ast.Decl) (lit string) {
@@ -49,19 +49,19 @@ func SpecTypeLit(spec ast.Spec) (lit string) {
 	return
 }
 
-func SpecDoc(spec ast.Spec) (lit string) {
+func SpecDoc(spec ast.Spec) *ast.CommentGroup {
 	if spec == nil {
-		return
+		return nil
 	}
 	switch n := spec.(type) {
 	case *ast.ValueSpec:
-		lit = n.Doc.Text()
+		return n.Doc
 	case *ast.ImportSpec:
-		lit = n.Doc.Text()
+		return n.Doc
 	case *ast.TypeSpec:
-		lit = n.Doc.Text()
+		return n.Doc
 	}
-	return
+	return nil
 }
 
 // RecvIdentLit 返回返回类型方法接收者 recv 的 Ident 字面描述.

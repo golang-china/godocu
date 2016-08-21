@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/doc"
+	"go/format"
 	"go/printer"
 	"go/token"
 	"io"
@@ -48,7 +49,7 @@ func formatTrans(output io.Writer, prefix string, limit int,
 		return FormatComments(output, text, prefix, limit)
 	}
 
-	pos := findCommentPrev(trans.Pos()-2, comments)
+	pos := findCommentPrev(trans.Pos(), comments)
 	if pos != -1 {
 		err = FormatComments(output, comments[pos].Text(), prefix, limit)
 		if err == nil {
@@ -563,11 +564,13 @@ func Godoc(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 
 // DocGo 以 go source 风格向 output 输出已排序的 ast.File.
 func DocGo(output io.Writer, paths string, fset *token.FileSet, file *ast.File) (err error) {
+	var buf bytes.Buffer
 	var text string
 	var comments []*ast.CommentGroup
 	var vs *ast.ValueSpec
 	var ts *ast.TypeSpec
 	var doc *ast.CommentGroup
+	var bs []byte
 
 	if IsGodocuFile(file) {
 		comments = file.Comments
@@ -641,6 +644,7 @@ func DocGo(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 		if err = formatTrans(output, "// ", 77, genDecl.Doc, comments); err != nil {
 			return
 		}
+		buf.Truncate(0)
 
 		limit := 77
 		s := ""
@@ -653,11 +657,11 @@ func DocGo(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 			s = "type "
 		}
 		if genDecl.Lparen.IsValid() {
-			err = fprint(output, s, "(", nl)
+			err = fprint(&buf, s, "(", nl)
 			s = "    // "
 			limit = 73
 		} else {
-			err = fprint(output, s)
+			err = fprint(&buf, s)
 			s = "// "
 		}
 		out := false
@@ -665,47 +669,78 @@ func DocGo(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 			if spec == nil {
 				continue
 			}
-
 			switch genDecl.Tok {
 			case token.VAR, token.CONST:
 				vs, _ = spec.(*ast.ValueSpec)
 				doc, vs.Doc = vs.Doc, nil
+				// 前置块注释加换行
+				if out && doc != nil && len(doc.Text()) != 0 {
+					err = fprint(&buf, nl)
+					if err != nil {
+						return
+					}
+				}
 			case token.TYPE:
 				ts, _ = spec.(*ast.TypeSpec)
 				doc, ts.Doc = ts.Doc, nil
 			}
 			if out {
-				if err = fprint(output, nl+nl); err != nil {
+				// type 分组声明加换行
+				if genDecl.Tok == token.TYPE {
+					err = fprint(&buf, nl)
+				}
+				if err != nil {
 					return
 				}
 			}
 			out = true
 			if doc != nil && len(doc.List) != 0 {
-				if err = formatTrans(output, s, limit, doc, comments); err != nil {
+				if err = formatTrans(&buf, s, limit, doc, comments); err != nil {
 					return
 				}
 			}
 
 			if limit == 73 {
-				if err = fprint(output, "    "); err != nil {
+				if err = fprint(&buf, "    "); err != nil {
 					return
 				}
 			}
 
-			if err = config.Fprint(output, fset, spec); err != nil {
-				return
+			err = config.Fprint(&buf, fset, spec)
+			if err == nil {
+				bs := buf.Bytes() // 没有尾注释, 不会产生换行, 需要添加
+				if bs[len(bs)-1] != '\n' {
+					err = fprint(&buf, nl)
+				}
 			}
+
 			switch genDecl.Tok {
 			case token.VAR, token.CONST:
 				vs.Doc = doc
 			case token.TYPE:
 				ts.Doc = doc
 			}
+			if err != nil {
+				return
+			}
 		}
 
 		if genDecl.Lparen.IsValid() {
-			err = fprint(output, nl, ")", nl)
+			bs := buf.Bytes()
+			if bs[len(bs)-1] != '\n' {
+				err = fprint(&buf, nl, ")", nl)
+			} else {
+				err = fprint(&buf, ")", nl)
+			}
 		}
+
+		bs, err = format.Source(buf.Bytes())
+		if err != nil {
+			return
+		}
+		// 替换"\t"缩进
+		bs = bytes.Replace(bs, nltab, nlspaces, -1)
+		_, err = output.Write(bs)
 
 		if err = fprint(output, nl+nl); err != nil {
 			return
@@ -714,3 +749,6 @@ func DocGo(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 
 	return
 }
+
+var nltab = []byte("\n\t")
+var nlspaces = []byte("\n    ")

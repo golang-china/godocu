@@ -187,7 +187,10 @@ func diffGenDecls(w io.Writer, prefix string, source, target []ast.Decl) (diff b
 		decl := node.(*ast.GenDecl)
 		for _, spec := range decl.Specs {
 			lit = SpecIdentLit(spec)
-			targ := dd.SearchSpec(lit)
+			if lit == "_" {
+				continue
+			}
+			targ, _, _ := dd.SearchSpec(lit)
 			if targ == nil {
 				diff, err = true, diffOut(false, w, prefix+lit, "")
 				if err != nil {
@@ -206,7 +209,7 @@ func diffGenDecls(w io.Writer, prefix string, source, target []ast.Decl) (diff b
 				continue
 			}
 			// 文档
-			slit, dlit = SpecDoc(spec), SpecDoc(targ)
+			slit, dlit = SpecDoc(spec).Text(), SpecDoc(targ).Text()
 
 			if slit != dlit {
 				diff, err = true, diffOut(false, w, prefix+lit+" doc:\n\n"+slit, prefix+lit+" doc:\n\n"+dlit)
@@ -222,7 +225,10 @@ func diffGenDecls(w io.Writer, prefix string, source, target []ast.Decl) (diff b
 		decl := node.(*ast.GenDecl)
 		for _, spec := range decl.Specs {
 			lit = SpecIdentLit(spec)
-			targ := dd.SearchSpec(lit)
+			if lit == "_" {
+				continue
+			}
+			targ, _, _ := dd.SearchSpec(lit)
 			if targ == nil {
 				diff, err = true, diffOut(false, w, "", prefix+lit)
 				if err != nil {

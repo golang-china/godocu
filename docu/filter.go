@@ -109,12 +109,15 @@ func exportedRecvFilter(fieldList *ast.FieldList, by SortDecl) bool {
 	for i := 0; i < len(fieldList.List); i++ {
 		switch n := fieldList.List[i].Type.(type) {
 		case *ast.Ident:
-			if !n.IsExported() && nil == by.SearchSpec(n.String()) {
+			if spec, _, _ := by.SearchSpec(n.String()); !n.IsExported() && spec == nil {
 				return false
 			}
 		case *ast.StarExpr:
 			ident, ok := n.X.(*ast.Ident)
-			if !ok || !ident.IsExported() && nil == by.SearchSpec(ident.String()) {
+			if !ok {
+				return false
+			}
+			if spec, _, _ := by.SearchSpec(ident.String()); !ident.IsExported() && spec == nil {
 				return false
 			}
 		}
@@ -150,10 +153,12 @@ func exportedSpecFilter(spec ast.Spec, by SortDecl) bool {
 				i++
 				continue
 			}
-			bySpec, _ := by.SearchSpec(SpecIdentLit(n)).(*ast.ValueSpec)
-			if bySpec != nil {
-				i++
-				continue
+			spec, _, _ := by.SearchSpec(SpecIdentLit(n))
+			if spec != nil {
+				if bySpec, _ := spec.(*ast.ValueSpec); bySpec != nil {
+					i++
+					continue
+				}
 			}
 
 			copy(n.Names[i:], n.Names[i+1:])
@@ -161,11 +166,17 @@ func exportedSpecFilter(spec ast.Spec, by SortDecl) bool {
 		}
 		return len(n.Names) != 0
 	case *ast.TypeSpec:
-		bySpec, _ := by.SearchSpec(n.Name.String()).(*ast.TypeSpec)
-		if !n.Name.IsExported() && nil == bySpec {
+		spec, _, _ := by.SearchSpec(SpecIdentLit(n))
+		if !n.Name.IsExported() && spec == nil {
 			return false
 		}
+		bySpec, _ := spec.(*ast.TypeSpec)
+		if !n.Name.IsExported() && bySpec == nil {
+			return false
+		}
+
 		var bt *ast.StructType
+
 		st, _ := n.Type.(*ast.StructType)
 		if bySpec != nil {
 			bt, _ = bySpec.Type.(*ast.StructType)
@@ -184,7 +195,7 @@ func exportedFieldFilter(n, by *ast.StructType) {
 	for i := 0; i < len(list); {
 		names := list[i].Names
 		for i := 0; i < len(names); {
-			if names[i].IsExported() || by == nil ||
+			if names[i].IsExported() || by != nil &&
 				hasField(by, names[i].String()) {
 				i++
 				continue

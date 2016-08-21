@@ -14,6 +14,7 @@ Godocu 基于 [docu] 实现的指令行工具, 从 Go 源码提取并生成文�
   - 简单比较包文档的不同之处
   - 支持外部模板文件
   - 翻译替换原文档
+  - 多平台文档只提取 linux[_amd64]
 
 该工具在 Golang 官方包下测试通过, 非官方包请核对输出结果.
 
@@ -149,6 +150,36 @@ Godocu 的非导出优先策略是:
 # file
 
 参数 'file' 表示外部文件, 目前仅为 `tmpl` 指令指定外部模板文件.
+
+# Merge
+
+指令 `merge` 追加 source 文档到 target 中相同顶级声明的文档之后.
+
+*注意: 输出结果保持 source 的代码结构, merge 在整个工具链中非常重要*
+
+现实中 merge 可用来合并原文档和翻译文档, merge 不分析翻译文档所用的语言.
+翻译文档代码结构可能和原文档不同, 比如:原文档中用了分组, 翻译文档没用.
+
+ - source 可以是源码或包文档, 事实上使用源码具有现实意义.
+ - target 可以是源码或包文档.
+ - 结果总是使用 source 的 import.
+ - 如果声明的文档一样, 不追加, 即只有一份文档.
+ - 指定 `lang` 参数才生成或覆盖 target, 否则仅向 stdout 打印结果.
+ - 最终结果 source 中已被删除的声明会被剔除, 新声明会出现.
+
+合并 `builtin` 包文档到 golang-china 的翻译项目.
+
+```shell
+$ godocu merge builtin /path/to/github.com/golang-china/golangdoc.translations/src
+```
+
+遍历所有官方包文档合并到 golang-china 的翻译项目.
+
+```shell
+$ godocu merge ... /path/to/github.com/golang-china/golangdoc.translations/src
+```
+
+例子中的 target 含有子目录 "src", 并以它结尾, 这不是必须的.
 
 # Code
 
@@ -390,8 +421,8 @@ Example 段有详细的例子演示如何配套使用.
 ```shell
 $ godocu list -goroot=/path/to/github.com/golang-china/golangdoc.translations ...
 $ godocu list /path/to/github.com/golang-china/golangdoc.translations/src...
-$ cd /path/to/github.com/golang-china/golangdoc.translations/src
-$ godocu list ....
+$ cd /path/to/github.com/golang-china/golangdoc.translations
+$ godocu list src...
 ```
 
  - 第一种把翻译项目目录当做 `goroot`. "..." 遍历所有包
@@ -402,22 +433,18 @@ $ godocu list ....
 
 ```json
 {
-    "Repo": "",
-    "Description": "",
-    "Lang": "",
-    "Markdown": true,
-    "Info": [
+    "Repo": "github.com/golang/go",
+    "Filename": "doc_zh_CN.go",
+    "Package": [
         {
             "Import": "",
             "Synopsis": "tar包实现了tar格式压缩文件的存取.",
             "Progress": 100,
-            "Prefix": "doc"
         },
         {
             "Import": "",
             "Synopsis": "zip包提供了zip档案文件的读写服务.",
             "Progress": 95,
-            "Prefix": "doc"
         },
         // .....
     ],
@@ -427,35 +454,12 @@ $ godocu list ....
 
 目录关系详见 `Example` 段.
 
-# Merge
-
-指令 `merge` 合并 source, target 中相同顶级声明的文档, source 文档在前.
-现实中 merge 可用来合并原文档和翻译文档, merge 不分析文档所用的语言.
-
- - source 可以是源码或包文档.
- - target 可以是源码或包文档.
- - 如果 target 的文档和 source 文档一样, 不合并
- - 如果 target 没有 import, 添加 source 的 import.
- - 指定 `lang` 参数才生成或覆盖 target, 否则仅向 stdout 打印结果.
-
-合并 `builtin` 包文档到 golang-china 的翻译项目.
-
-```shell
-$ godocu merge builtin /path/to/github.com/golang-china/golangdoc.translations/src
-```
-
-遍历所有官方包文档合并到 golang-china 的翻译项目.
-
-```shell
-$ godocu merge ... /path/to/github.com/golang-china/golangdoc.translations/src
-```
-
-例子中的 target 含有子目录 "src", 并以它结尾, 这不是必须的.
-
 # Replace
 
 指令 `replace` 用 source 的翻译文档替换 target 中未翻译的文档.
-显然 source, target 必须都是双语翻译文档, 即符合 Godocu 文件名命名风格.
+要求 source, target 必须都是双语翻译文档, 即符合 Godocu 文件名命名风格.
+
+显然在使用 `replace` 前, 对 source, target 进行 'merge' 处理可保障代码结构一致.
 
 # Example
 
@@ -518,46 +522,27 @@ github.com
 
 之后就可使用 Godocu 提供的指令进行文档操作了.
 
-以 [Go-zh][] 源码翻译为例:
+实战, 合并 [Go-zh][] 和 [translations][] 的翻译成果.
 
 ```shell
-$ cd $TARGET
-$ git clone https://github.com/Go-zh/go ./go-zh
-$ mkdir -p go-zh-trans/src
-$ godocu code ./go-zh/src...
+$ cd $TARGET # $TARGET 是此实战工作目录, 先克隆两个项目
+$ git clone https://github.com/Go-zh/go go-zh
+$ git clone https://github.com/golang-china/golangdoc.translations translations
+$ # 类似 builtin 那些需要 -u 参数的包要先单独处理, 目标路径会自动建立
+$ godocu code ./go-zh/src/builtin go-zh-trans/src -lang=zh_cn -u
+$ # 为 Go-zh 生成文档
+$ godocu code ./go-zh/src... go-zh-trans/src -lang=zh_cn
+$ # 两个项目都合并最新英文文档, merge 保证了结构一致性
+$ godocu merge ... go-zh-trans/src -lang=zh_cn
+$ godocu merge ... translations/src -lang=zh_cn
+$ # 两种方法进行 replace, 结果可能有所不同
+$ godocu replace ./go-zh-trans/src... ./translations/src -lang=zh_cn
+$ godocu replace ./translations/src... ./go-zh-trans/src -lang=zh_cn
 ```
 
-注意 'src' 子目录的重要性, 有了这个就可以正确计算官方包的导入路径.
+*注意: 同时指定 `target`, `lang` 才会生成(覆盖) target, 不然仅输出在 Stdout.*
 
-显然上面的 godocu code 没有目标也没有带参数 `lang`, 输出在 Stdout.
-如果改成
-
-```shell
-$ godocu code ./go-zh/src... -lang=zh_cn
-```
-
-仍然输出到 Stdout. 只有 target 和 `lang` 都齐全才会生成文件
-
-```shell
-$ godocu code ./go-zh/src... ./go-zh-trans/src -lang=zh_cn
-```
-
-这样生成的文档只带翻译, 不带原文. 若要合并原文档, 需要执行 `merge`.
-显然需要选择合适的 go 版本, 才能更好的合并文档.
-下面省略 `goroot` 参数, 采用系统当前版本的原文档.
-
-```shell
-$ godocu merge ... ./go-zh-trans/src -lang=zh_cn
-```
-
-*注意: 类似 builtin 那些需要 -u 参数的包要单独处理*
-
-假设 [translations][] 的项目在 "./translations"
-合并 [Go-zh][] 和 [translations][] 的翻译成果可以使用:
-
-```shell
-$ godocu replace ./go-zh-trans/src... ./translations/src
-```
+两个项目的目录结构可能和最新官方包不一致, 使用 tree 指令对比, 然后手工处理.
 
 [docu]: https://godoc.org/github.com/golang-china/godocu/docu
 [golang-china]: https://github.com/golang-china/golang-china.github.com

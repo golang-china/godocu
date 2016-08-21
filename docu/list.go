@@ -3,6 +3,7 @@ package docu
 import (
 	"go/ast"
 	"go/token"
+	"strings"
 )
 
 // Info 表示单个包文档信息.
@@ -47,7 +48,7 @@ func TranslationProgress(file *ast.File) int {
 
 	if doc != nil {
 		origin++
-		pos := findCommentPrev(doc.Pos()-2, comments)
+		pos := findCommentPrev(doc.Pos(), comments)
 		if pos != -1 {
 			if !equalComment(doc, comments[pos]) {
 				trans++
@@ -82,7 +83,7 @@ func TranslationProgress(file *ast.File) int {
 					continue
 				}
 				origin++
-				pos := findCommentPrev(doc.Pos()-6, comments)
+				pos := findCommentPrev(doc.Pos(), comments)
 				if pos != -1 {
 					if !equalComment(doc, comments[pos]) {
 						trans++
@@ -102,7 +103,7 @@ func TranslationProgress(file *ast.File) int {
 		}
 
 		origin++
-		pos := findCommentPrev(doc.Pos()-2, comments)
+		pos := findCommentPrev(doc.Pos(), comments)
 		if pos != -1 {
 			if !equalComment(doc, comments[pos]) {
 				trans++
@@ -127,19 +128,22 @@ func transOrigin(file *ast.File, trans *ast.CommentGroup) *ast.CommentGroup {
 		return nil
 	}
 
-	pos := findCommentPrev(trans.Pos()-2, file.Comments)
+	pos := findCommentPrev(trans.Pos(), file.Comments)
 	if pos == -1 {
 		return nil
 	}
-	origin := file.Comments[pos]
-	if len(origin.List) == 0 {
-		return nil
-	}
+	return file.Comments[pos]
+}
 
-	return origin
+// EqualComment 简单比较两个 ast.CommentGroup 值是否一样
+func EqualComment(a, b *ast.CommentGroup) bool {
+	return equalComment(a, b)
 }
 
 func equalComment(a, b *ast.CommentGroup) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
 	if len(a.List) != len(b.List) {
 		return false
 	}
@@ -154,7 +158,15 @@ func equalComment(a, b *ast.CommentGroup) bool {
 func findCommentPrev(pos token.Pos, comments []*ast.CommentGroup) int {
 	if int(pos) > 0 {
 		for i, cg := range comments {
-			if cg.End() == pos {
+			if cg.End() > pos {
+				return -1
+			}
+			switch pos - cg.End() {
+			case 2, 3, 6:
+				if len(cg.List) == 0 ||
+					strings.HasPrefix(cg.List[0].Text, "// +build") {
+					return -1
+				}
 				return i
 			}
 		}

@@ -147,7 +147,7 @@ var sp = "\n\n" + strings.Repeat("/", 80) + "\n\n"
 
 func skipOSArch(f func(string) bool) func(string) bool {
 	return func(name string) bool {
-		return f(name) && !docu.IsOSArchFile(name)
+		return f(name) && !docu.IsOSArchFileEx(name, "linux", "amd64")
 	}
 }
 
@@ -269,8 +269,10 @@ func main() {
 			prefix = ""
 		}
 
-		target = filepath.Join(target, source[offset:])
-		source = source[:offset]
+		if offset < len(source) {
+			target = filepath.Join(target, source[offset:])
+			source = source[:offset]
+		}
 
 		ch = make(chan interface{})
 		go walkPath(ch, sub, target)
@@ -430,8 +432,8 @@ func showMode(command string, ch chan interface{},
 	var ok bool
 	var key, source, dst string
 	var paths []string
-	var output *os.File
 
+	output := os.Stdout
 	ext := ".go"
 	docgo := docu.DocGo
 	if command == "plain" {
@@ -465,14 +467,17 @@ func showMode(command string, ch chan interface{},
 
 		key = paths[0]
 		file := du.MergePackageFiles(key)
+
+		if target != "" {
+			// 计算目标路径, 第一个可能是单文件
+			if dst == "" && strings.HasSuffix(source, ".go") {
+				source = filepath.Dir(source)
+			}
+			dst = filepath.Join(target, source[offset:])
+		}
+
 		if !u {
 			if target != "" {
-				// 计算目标路径, 第一个可能是单文件
-				if dst == "" && strings.HasSuffix(source, ".go") {
-					source = filepath.Dir(source)
-				}
-				dst = filepath.Join(target, source[offset:])
-
 				// 以目标过滤源
 				paths, _ = tu.Parse(dst, nil)
 				dis := tu.MergePackageFiles(key)
@@ -493,8 +498,9 @@ func showMode(command string, ch chan interface{},
 				docu.ExportedFileFilter(file)
 			}
 		}
-
-		output, err = createFile(dst, fname)
+		if target != "" && lang != "" && lang != "." {
+			output, err = createFile(dst, fname)
+		}
 		if err != nil {
 			break
 		}
@@ -730,19 +736,15 @@ func mergeMode(ch chan interface{},
 		}
 
 		src := du.MergePackageFiles(key)
-		if len(dis.Imports) == 0 {
-			dis.Imports = src.Imports
+
+		// src 为输出结果, 用目标过滤源
+		docu.SortDecl(dis.Decls).Filter(src)
+
+		if !docu.EqualComment(src.Doc, dis.Doc) {
+			docu.MergeDoc(dis.Doc, src.Doc)
 		}
 
-		if src.Doc != nil {
-			if dis.Doc == nil {
-				dis.Doc = src.Doc
-			} else {
-				docu.MergeDoc(src.Doc, dis.Doc)
-			}
-		}
-
-		docu.MergeDeclsDoc(src.Decls, dis.Decls)
+		docu.MergeDeclsDoc(dis.Decls, src.Decls)
 
 		if lang != "." {
 			output, err = createFile(dst, fname)
@@ -760,7 +762,7 @@ func mergeMode(ch chan interface{},
 		}
 
 		if err == nil {
-			err = docu.DocGo(output, key, tu.FileSet, dis)
+			err = docu.DocGo(output, key, du.FileSet, src)
 		}
 		if output != os.Stdout {
 			output.Close()
@@ -840,7 +842,7 @@ func replaceMode(ch chan interface{},
 			lang = "."
 		}
 
-		docu.Replace(src, dis)
+		docu.Replace(dis, src)
 
 		if len(dis.Imports) == 0 {
 			dis.Imports = src.Imports
