@@ -18,14 +18,12 @@ const (
 	OtherNum = 1 << 32
 )
 
-var numNames = map[int]string{
-	ImportNum: "Import",
-	ConstNum:  "Const",
-	VarNum:    "Var",
-	TypeNum:   "Type",
-	FuncNum:   "Func",
-	MethodNum: "Method",
-	OtherNum:  "Other",
+var numNames = []string{
+	ImportNum: "import ",
+	ConstNum:  "const ",
+	VarNum:    "var ",
+	TypeNum:   "type ",
+	FuncNum:   "func ",
 }
 
 // NodeNumber 返回值用于节点排序. 随算法更新同类型节点该返回值会变更.

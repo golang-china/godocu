@@ -21,7 +21,9 @@ func PackageFilter(name string) bool {
 	}
 
 	if strings.HasSuffix(name, ".go") {
-		return !strings.HasSuffix(name, "_test.go")
+		return !strings.HasPrefix(name, "test_") &&
+			!strings.HasPrefix(name, "main_") &&
+			!strings.HasSuffix(name, "_test.go")
 	}
 	return strings.IndexByte(name, '.') == -1
 }
@@ -43,8 +45,11 @@ func MainFilter(name string) bool {
 		return false
 	}
 	if strings.HasSuffix(name, ".go") {
-		return name != "test.go" && !strings.HasSuffix(name, "_test.go")
+		return name != "test.go" && !strings.HasSuffix(name, "_test.go") &&
+			!strings.HasPrefix(name, "test_") &&
+			!strings.HasPrefix(name, "doc_")
 	}
+
 	return name == "main"
 }
 
@@ -231,6 +236,20 @@ func hasField(n *ast.StructType, name string) bool {
 		}
 	}
 	return false
+}
+
+func findField(n *ast.FieldList, lit string) (*ast.Field, int) {
+	for _, field := range n.List {
+		if field == nil {
+			continue
+		}
+		for i, ident := range field.Names {
+			if ident.String() == lit {
+				return field, i
+			}
+		}
+	}
+	return nil, 0
 }
 
 // WalkPath 可遍历 paths 及其子目录或者独立的文件.

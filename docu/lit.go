@@ -49,6 +49,7 @@ func SpecTypeLit(spec ast.Spec) (lit string) {
 	return
 }
 
+// SpecDoc 返回 spec 的 Doc,Comment 字段
 func SpecDoc(spec ast.Spec) *ast.CommentGroup {
 	if spec == nil {
 		return nil
@@ -62,6 +63,22 @@ func SpecDoc(spec ast.Spec) *ast.CommentGroup {
 		return n.Doc
 	}
 	return nil
+}
+
+// SpecComment 返回 spec 的 Doc,Comment 字段
+func SpecComment(spec ast.Spec) (*ast.CommentGroup, *ast.CommentGroup) {
+	if spec == nil {
+		return nil, nil
+	}
+	switch n := spec.(type) {
+	case *ast.ValueSpec:
+		return n.Doc, n.Comment
+	case *ast.ImportSpec:
+		return n.Doc, n.Comment
+	case *ast.TypeSpec:
+		return n.Doc, n.Comment
+	}
+	return nil, nil
 }
 
 // RecvIdentLit 返回返回类型方法接收者 recv 的 Ident 字面描述.
@@ -152,6 +169,14 @@ func FieldLit(field *ast.Field) (lit string) {
 		} else {
 			lit += " " + types.ExprString(field.Type)
 		}
+	}
+	return
+}
+
+func IdentsLit(idents []*ast.Ident) (lit string) {
+	lit = idents[0].String()
+	for i := 1; i < len(idents); i++ {
+		lit += ", " + idents[i].String()
 	}
 	return
 }

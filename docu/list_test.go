@@ -4,7 +4,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"sort"
 	"testing"
 )
 
@@ -24,12 +23,12 @@ func TestTransOrigin(t *testing.T) {
 	if err != nil {
 		t.Fatal("Oop!")
 	}
-	sort.Sort(SortImports(file.Imports))
 	Index(file)
 
 	_decls, _ := declsOf(ConstNum, file.Decls, 0)
 	decls := SortDecl(_decls)
-	source := testToValueSpec(decls.SearchSpec("testOk"))
+	spec, _, _ := decls.SearchSpec("testOk")
+	source := testToValueSpec(spec)
 	if source == nil {
 		t.Fatal("Oop!")
 	}
@@ -41,8 +40,8 @@ func TestTransOrigin(t *testing.T) {
 	if origin.Text() != "OK indicates the lack of an error.\n" {
 		t.Fatal(origin.Text())
 	}
-
-	target := testToValueSpec(decls.SearchSpec("testNon"))
+	spec, _, _ = decls.SearchSpec("testNon")
+	target := testToValueSpec(spec)
 	if target == nil {
 		t.Fatal("Oop!")
 	}
@@ -50,9 +49,9 @@ func TestTransOrigin(t *testing.T) {
 	if origin != nil {
 		t.Fatal(origin.Text())
 	}
-	want := target.Doc.Text() +
+	want := source.Doc.Text() +
 		GoDocu_Dividing_line + "\n" +
-		source.Doc.Text()
+		target.Doc.Text()
 
 	replaceDoc(file, file, target.Doc, source.Doc)
 	got := target.Doc.Text()

@@ -117,6 +117,13 @@ func replaceDoc(dst, src *ast.File, target, source *ast.CommentGroup) {
 // 保持 target.Pos(), target.End() 不变
 func ReplaceDoc(target, source *ast.CommentGroup) {
 	pos, end := target.Pos(), target.End()
+	if !pos.IsValid() {
+		pos = 1 << 30
+	}
+	if !end.IsValid() {
+		end = 1 << 30
+	}
+
 	if target.List != nil {
 		target.List = target.List[:0]
 	}

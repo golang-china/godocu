@@ -1,26 +1,26 @@
 # GoDocu
 
-Godocu 基于 [docu] 实现的指令行工具, 从 Go 源码提取并生成文档.
+Godocu 基于 [docu][] 实现的指令行工具, 从 Go 源码生成文档.
 
 功能:
 
   - 80 列换行, 支持多字节字符
   - 若原注释已经符合 80 列换行, 保持不变.
-  - 内置三种文档风格, Go 源码风格, godoc 文本风格, Markdown 模板
   - 可提取执行包文档, 测试包文档, 非导出符号文档
   - 遍历目录
+  - 生成多种风格文档, Go 源码风格, 文本风格, Markdown 风格, 支持模板
   - 生成文档概要清单
-  - 合并不同版本文档
-  - 简单比较包文档的不同之处
-  - 支持外部模板文件
-  - 翻译替换原文档
-  - 多平台文档只提取 linux[_amd64]
+  - 合并生成双语文档
+  - 合并两份双语文档中的翻译成果
+  - 比较两份文档差异
+  - 比较两个包目录结构差异
+  - 多平台文档只提取 linux, amd64 的组合
 
 该工具在 Golang 官方包下测试通过, 非官方包请核对输出结果.
 
 文件名命名风格:
 
-Godocu 文档文件名由前缀 "doc"|"main"|"test" 和语言后缀 "_lang" 和扩展名组成.
+Godocu 文档文件名由前缀 "doc"|"main"|"test" 和语言后缀 "_lang" 以及扩展名组成.
 
 扩展名
 
@@ -82,21 +82,22 @@ The arguments are:
 
 source 必选, 用于计算源文件绝对路径, 和 import path.
 source 可以是 import path 或绝对路径表示的目录或文件.
-因 go 源文件绝对路径比较规律, Godocu 可通过绝对路径计算出 import path.
-如果是 import path, Godocu 先在 `GOROOT/src`, `GOPATH/src` 下查找并计算出绝对路径.
+
+如果是 import path, 先在 `GOROOT/src`, `GOPATH/src` 下查找并计算出绝对路径.
+因 go 源文件绝对路径比较规律, Godocu 通过绝对路径计算出 import path.
 
 在 source 尾部加 `...` 表示遍历子目录.
-若 source 为 `...` 表示所有官方包, 即遍历 `GOROOT/src` 下的所有包.
+若 source 值为 `...` 特指全部官方包, 即遍历 `GOROOT/src` 下的所有包.
 
 遍历目录时 Godocu 参照 Go 命名习惯, 忽略 `testdata`, `vendor` 之类的目录.
 
-详情参见相关指令以及 `Example` 段.
+详情参见相关指令以及 [Example](#example).
 
 # target
 
-Godocu 要求某个包的目录结构在 source 和 target 下是相同的.
-
 target 除 `list` 指令外都表示基础目标路径, 配合 souce 计算出目标路径.
+
+Godocu 要求某个包的目录结构在 source 和 target 下是相同的.
 
 方便起见, target 值为 "--" 表示输出到 source 计算得到的原包目录.
 
@@ -108,7 +109,7 @@ target 除 `list` 指令外都表示基础目标路径, 配合 souce 计算出�
 
 *安全起见, 只有显示指定 `lang` 参数, 才会生成或覆盖目标文件, 否则输出到 Stdout*
 
-详情参见相关指令以及 `Example` 段.
+详情参见相关指令以及 [Example](#example).
 
 # lang
 
@@ -117,8 +118,9 @@ target 除 `list` 指令外都表示基础目标路径, 配合 souce 计算出�
 
 辅助函数 `docu.LangNormal` 提供规范化处理.
 
-方便起见, 未指定 `lang` 时, Godocu 尝试从第一个匹配的 target 中提取 `lang`.
-自动提取的 `lang` 仅为了处理多种语言文档共存的情况.
+方便起见, 未指定 `lang` 时, Godocu 尝试从 target 下首个匹配的包提取 `lang`.
+
+*提示: 不要让多种翻译文档共存同一目录*
 
 详情参见相关指令.
 
@@ -144,8 +146,7 @@ Godocu 的非导出优先策略是:
 
 # goroot
 
-参数 `goroot`,`gopath` 用于计算 source 为 import path 时的绝对路径.
-可以指定不同于系统变量的值, 比如指定 `goroot` 为特定 go 版本生成官方包文档.
+仅当 source 为 import path 时, 参数 `goroot`,`gopath` 用于计算绝对路径.
 
 # file
 
@@ -153,37 +154,37 @@ Godocu 的非导出优先策略是:
 
 # Merge
 
-指令 `merge` 追加 source 文档到 target 中相同顶级声明的文档之后.
+指令 `merge` 合并 source 文档到 target 中相同顶级声明的文档之前, 生成翻译文档.
 
 *注意: 输出结果保持 source 的代码结构, merge 在整个工具链中非常重要*
 
-现实中 merge 可用来合并原文档和翻译文档, merge 不分析翻译文档所用的语言.
+翻译文档生是双(语)文档, 但 merge 不分析文档所用的语言.
 翻译文档代码结构可能和原文档不同, 比如:原文档中用了分组, 翻译文档没用.
+使用 merge 可保证文档结构风格和原代码一致.
 
  - source 可以是源码或包文档, 事实上使用源码具有现实意义.
  - target 可以是源码或包文档.
  - 结果总是使用 source 的 import.
  - 如果声明的文档一样, 不追加, 即只有一份文档.
+ - source, target 都有尾注释的话, 使用 target 中的尾注释.
  - 指定 `lang` 参数才生成或覆盖 target, 否则仅向 stdout 打印结果.
  - 最终结果 source 中已被删除的声明会被剔除, 新声明会出现.
 
-合并 `builtin` 包文档到 golang-china 的翻译项目.
+合并 `builtin` 包文档到 [translations][].
 
 ```shell
 $ godocu merge builtin /path/to/github.com/golang-china/golangdoc.translations/src
 ```
 
-遍历所有官方包文档合并到 golang-china 的翻译项目.
+遍历所有官方包文档合并到 [translations][].
 
 ```shell
 $ godocu merge ... /path/to/github.com/golang-china/golangdoc.translations/src
 ```
 
-例子中的 target 含有子目录 "src", 并以它结尾, 这不是必须的.
-
 # Code
 
-指令 `code` 输出 ".go" 格式文档.
+指令 `code` 输出 ".go" 格式单文档.
 
 如果指定了 target 要求参数 `lang` 非空.
 
@@ -193,23 +194,23 @@ $ godocu merge ... /path/to/github.com/golang-china/golangdoc.translations/src
 $ godocu code builtin -u
 ```
 
-如你所见, Godocu 支持 'flag' 参数在任意位置出现.
+如你所见, Godocu 支持 "-" 开头的参数在任意位置出现.
 
 # Plain
 
-指令 `plain` 输出 ".text" 格式文档.
+指令 `plain` 输出 ".text" 格式单文档.
 
 如果指定了 target 要求参数 `lang` 非空.
 
 # Tmpl
 
-tmpl 指令支持模板输出, 内置 Markdown 模板可供参考.
-
-参数关系参考 Code 段.
+指令 `tmpl` 支持模板输出, 参数 'file' 指定模板文件, 缺省为内置的 Markdown 模板.
 
 # Tree
 
-指令 `tree` 遍历比较并输出 sourec, target 目录结构的不同.
+指令 `tree` 遍历比较输出 sourec, target 目录结构差异.
+
+该指令总是遍历目录, source 无需加 "..."
 
 遍历比较当前版本 1.6.2 和老版本的差异:
 
@@ -263,11 +264,9 @@ source target path
 $ godocu tree cmd /usr/local/Cellar/go/1.5.2/libexec/src
 ```
 
-tree 总是变量目录, source 无需加 "..."
-
 # Diff
 
-指令 `diff` 比较输出 source, target 共有包差异信息, 而 `first` 仅输出首个差异.
+指令 `diff` 比较输出 source, target 共有包差异, 指令 `first` 仅输出首个差异.
 
 如果指定了 `lang`, 对 target 进行 `lang` 过滤, 且以 target 的声明为对比条目.
 
@@ -414,7 +413,7 @@ type Info struct {
 
 *翻译完成度属性 Progress 通过简单比较文档值计算得到,可能与现实不符*
 
-Example 段有详细的例子演示如何配套使用.
+[Example](#example) 段有详细的例子演示如何配套使用.
 
 以 [translations][] 翻译项目为例输出全部包文档清单到 Stdout 的用法有多种:
 
@@ -452,12 +451,12 @@ $ godocu list src...
 ```
 
 
-目录关系详见 `Example` 段.
+目录关系详见 [Example](#example) 段.
 
 # Replace
 
 指令 `replace` 用 source 的翻译文档替换 target 中未翻译的文档.
-要求 source, target 必须都是双语翻译文档, 即符合 Godocu 文件名命名风格.
+要求 source, target 必须都是翻译文档, 即符合 Godocu 文件名命名风格.
 
 显然在使用 `replace` 前, 对 source, target 进行 'merge' 处理可保障代码结构一致.
 
@@ -523,6 +522,13 @@ github.com
 之后就可使用 Godocu 提供的指令进行文档操作了.
 
 实战, 合并 [Go-zh][] 和 [translations][] 的翻译成果.
+
+    merge 中的 source 可能和翻译的版本不符合
+    因为 Go-zh 是基于源码的翻译, merge 的 source 不能使用 ./go-zh/src...
+    同理 translations 也应选择配套的版本吧
+    最佳情况下应该选择相同的 source
+
+下列示意代码假设系统 go 版本和 Go-zh 所用版本一致
 
 ```shell
 $ cd $TARGET # $TARGET 是此实战工作目录, 先克隆两个项目

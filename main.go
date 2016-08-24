@@ -467,7 +467,7 @@ func showMode(command string, ch chan interface{},
 
 		key = paths[0]
 		file := du.MergePackageFiles(key)
-
+		file.Unresolved = nil
 		if target != "" {
 			// 计算目标路径, 第一个可能是单文件
 			if dst == "" && strings.HasSuffix(source, ".go") {

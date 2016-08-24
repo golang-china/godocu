@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"go/ast"
 	"go/doc"
-	"go/format"
 	"go/printer"
 	"go/token"
+	"go/types"
 	"io"
 	"strings"
+	"text/tabwriter"
 	"unicode"
 
 	"golang.org/x/text/width"
@@ -132,8 +133,8 @@ func IsWrapped(text string, limit int) bool {
 		switch r {
 		case '\n':
 			w = 0
-		case '\t':
 			w += 4
+		case '\t':
 		default:
 			if r > unicode.MaxLatin1 {
 				w += 2
@@ -316,130 +317,6 @@ func LineWrapper(text string, prefix string, limit int) (wrap string) {
 	return wrap
 }
 
-// 老算法
-func _lineWrapper(text string, prefix string, limit int) (wrap string) {
-	// go scanner 已经剔除了 '\r', 统一为 '\n' 风格
-	const nl = "\n"
-	var r, next rune
-	var isIndent bool
-	var last, word string // 最后一行前部和尾部单词
-	if text == "" {
-		return ""
-	}
-	n, w, nw, ww := 0, 0, 0, 0
-	for _, r = range text {
-		// 预读取一个
-		r, next = next, r
-		if r == 0 {
-			// NOTE(achun): 不应该剔除首行缩进, 那可能是作者强调的信息
-			nw = runeWidth(next)
-			continue
-		}
-		switch r {
-		case '\n':
-			if wrap != "" || last != "" || word != "" {
-				wrap += strings.TrimRight(prefix+last+word, " ") + nl
-			}
-			w, ww, last, word = 0, 0, "", ""
-			isIndent = false
-			nw = runeWidth(next)
-			continue
-		case '\t':
-			// tab 缩进替换为 4 空格, 保持行间 tab
-			if last == "" || len(word) >= 4 && word[:4] == "    " {
-				w, word = w+4, word+"    "
-				isIndent = true
-			} else {
-				w, last, word = w/4*4+4, last+"\t", ""
-			}
-			continue
-		case ' ':
-			// 行首连续两个空格算做缩进
-			if next == ' ' && last == "" {
-				isIndent = true
-			}
-		}
-
-		if isIndent {
-			word += string(r)
-			continue
-		}
-		n, nw = nw, runeWidth(next)
-
-		w += n
-		ww += n // word width
-		word += string(r)
-		// 确定下一个 rune 归属行
-		if n == 2 || r == ' ' || n != nw {
-			// 分离单词或者单字节多字节混合, 例如: 值value
-			last += word
-			word, ww = "", 0
-		}
-
-		if w == limit {
-			if next == ' ' || next == '\n' {
-				next = '\n'
-				continue
-			}
-			wrap += strings.TrimRight(prefix+last, " ") + nl
-			last = ""
-			w = ww
-			continue
-		}
-
-		if w+nw <= limit {
-			continue
-		}
-		if next != ' ' && strings.IndexRune(KeepPunct, next) != -1 {
-			wrap += strings.TrimRight(prefix+last, " ") + nl
-			last = ""
-			w = ww
-			continue
-		}
-
-		if next != ' ' && strings.IndexRune(WrapPunct, next) != -1 {
-			wrap += strings.TrimRight(prefix+last+word, " ") + nl
-			last, word = "", string(next)
-			w, ww = nw, nw
-			next, nw = 0, 0
-			continue
-		}
-
-		if pos := UrlPos(last); pos != -1 {
-			if pos == 0 {
-				wrap += strings.TrimRight(prefix+last, " ") + nl
-				last = ""
-				w = ww
-			} else {
-				wrap += strings.TrimRight(prefix+last[:pos], " ") + nl
-				last, word = last[pos:]+word, ""
-				w, ww = visualWidth(last), 0
-			}
-			continue
-		}
-
-		wrap += strings.TrimRight(prefix+last, " ") + nl
-		last = ""
-		w = 0
-	}
-
-	if word != "" || last != "" {
-		wrap += prefix + last + word
-	}
-	if next != 0 {
-		if wrap == "" {
-			wrap = prefix + string(next)
-		} else {
-			wrap += string(next)
-		}
-	}
-
-	if wrap[len(wrap)-1] != '\n' {
-		wrap += "\n"
-	}
-	return
-}
-
 func fprint(output io.Writer, i ...interface{}) (err error) {
 	if output != nil {
 		_, err = fmt.Fprint(output, i...)
@@ -562,15 +439,20 @@ func Godoc(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 	return
 }
 
+var tabEscape = []byte{tabwriter.Escape}
+
 // DocGo 以 go source 风格向 output 输出已排序的 ast.File.
+// NOTE: 未来计划去掉参数 fset.
 func DocGo(output io.Writer, paths string, fset *token.FileSet, file *ast.File) (err error) {
 	var buf bytes.Buffer
-	var text string
-	var comments []*ast.CommentGroup
-	var vs *ast.ValueSpec
-	var ts *ast.TypeSpec
-	var doc *ast.CommentGroup
 	var bs []byte
+	var text string
+	var doc *ast.CommentGroup
+	var comments []*ast.CommentGroup
+
+	var ts *ast.TypeSpec
+	var vs *ast.ValueSpec
+	var fields *ast.FieldList
 
 	if IsGodocuFile(file) {
 		comments = file.Comments
@@ -615,9 +497,10 @@ func DocGo(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 		return
 	}
 
+	w := tabwriter.NewWriter(&buf, 4, 4, 1, ' ', tabwriter.StripEscape)
 	for _, decl := range file.Decls {
 		num := NodeNumber(decl)
-		if num == ImportNum {
+		if num == ImportNum || num > MethodNum {
 			continue
 		}
 
@@ -636,6 +519,7 @@ func DocGo(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 			}
 			continue
 		}
+
 		genDecl, _ := decl.(*ast.GenDecl)
 		if genDecl == nil || len(genDecl.Specs) == 0 {
 			continue
@@ -644,105 +528,119 @@ func DocGo(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 		if err = formatTrans(output, "// ", 77, genDecl.Doc, comments); err != nil {
 			return
 		}
-		buf.Truncate(0)
 
-		limit := 77
-		s := ""
-		switch genDecl.Tok {
-		case token.VAR:
-			s = "var "
-		case token.CONST:
-			s = "const "
-		case token.TYPE:
-			s = "type "
-		}
+		buf.Truncate(0)
+		prefix, ident := "// ", ""
+
 		if genDecl.Lparen.IsValid() {
-			err = fprint(&buf, s, "(", nl)
-			s = "    // "
-			limit = 73
+			fprint(&buf, numNames[num], "(\n")
+			prefix = "    //"
+			ident = "    "
 		} else {
-			err = fprint(&buf, s)
-			s = "// "
+			fprint(&buf, numNames[num])
 		}
+		limit := 80 - len(prefix)
+
 		out := false
 		for _, spec := range genDecl.Specs {
 			if spec == nil {
 				continue
 			}
-			switch genDecl.Tok {
-			case token.VAR, token.CONST:
-				vs, _ = spec.(*ast.ValueSpec)
+
+			fields, vs, ts = nil, nil, nil
+			if genDecl.Tok != token.TYPE {
+				vs = spec.(*ast.ValueSpec)
 				doc, vs.Doc = vs.Doc, nil
-				// 前置块注释加换行
-				if out && doc != nil && len(doc.Text()) != 0 {
-					err = fprint(&buf, nl)
-					if err != nil {
-						return
-					}
-				}
-			case token.TYPE:
-				ts, _ = spec.(*ast.TypeSpec)
+			} else {
+				ts = spec.(*ast.TypeSpec)
 				doc, ts.Doc = ts.Doc, nil
-			}
-			if out {
-				// type 分组声明加换行
-				if genDecl.Tok == token.TYPE {
-					err = fprint(&buf, nl)
+				if st, _ := ts.Type.(*ast.StructType); st != nil && st.Struct.IsValid() {
+					fields = st.Fields
 				}
+			}
+
+			// type 分组声明加换行; 前置块注释加换行
+			if out && genDecl.Tok == token.TYPE ||
+				out && doc != nil && len(doc.List) != 0 {
+				err = fprint(w, nl)
 				if err != nil {
 					return
 				}
 			}
 			out = true
 			if doc != nil && len(doc.List) != 0 {
-				if err = formatTrans(&buf, s, limit, doc, comments); err != nil {
-					return
-				}
+				w.Write(tabEscape)
+				formatTrans(w, prefix, limit, doc, comments)
+				w.Write(tabEscape)
 			}
 
-			if limit == 73 {
-				if err = fprint(&buf, "    "); err != nil {
-					return
+			if fields == nil {
+				if ts != nil {
+					fprint(w, ident, ts.Name.String(), "\t", types.ExprString(ts.Type))
+					if ts.Comment != nil {
+						fprint(w, "\t// ", strings.TrimSpace(ts.Comment.Text()), nl)
+					} else {
+						fprint(w, nl)
+					}
+					continue
+				}
+				fprint(w, ident, IdentsLit(vs.Names))
+				if vs.Type != nil {
+					fprint(w, "\t", types.ExprString(vs.Type))
+				}
+				for i, expr := range vs.Values {
+					if i == 0 {
+						fprint(w, "\t= ", types.ExprString(expr))
+					} else {
+						fprint(w, ", ", types.ExprString(expr))
+					}
+				}
+				if vs.Comment != nil {
+					fprint(w, "\t// ", strings.TrimSpace(vs.Comment.Text()), nl)
+				} else {
+					fprint(w, nl)
+				}
+				continue
+			}
+			fprint(w, ident, ts.Name.String(), " struct {\n")
+			for _, field := range fields.List {
+				doc = field.Doc
+				if doc != nil && len(doc.List) != 0 {
+					w.Write(tabEscape)
+					formatTrans(w, "    "+prefix, limit-4, doc, comments)
+					w.Write(tabEscape)
+				}
+
+				fprint(w, "    ", ident, IdentsLit(field.Names), "\t",
+					types.ExprString(field.Type))
+
+				if field.Tag != nil {
+					fprint(w, " ", field.Tag.Value)
+				}
+				if field.Comment != nil {
+					fprint(w, "\t// ", field.Comment.Text())
+				} else {
+					fprint(w, "\n")
 				}
 			}
-
-			err = config.Fprint(&buf, fset, spec)
-			if err == nil {
-				bs := buf.Bytes() // 没有尾注释, 不会产生换行, 需要添加
-				if bs[len(bs)-1] != '\n' {
-					err = fprint(&buf, nl)
-				}
-			}
-
-			switch genDecl.Tok {
-			case token.VAR, token.CONST:
-				vs.Doc = doc
-			case token.TYPE:
-				ts.Doc = doc
-			}
-			if err != nil {
-				return
-			}
+			fprint(w, ident+"}\n")
 		}
+		w.Flush()
 
+		bs = buf.Bytes()
 		if genDecl.Lparen.IsValid() {
-			bs := buf.Bytes()
-			if bs[len(bs)-1] != '\n' {
-				err = fprint(&buf, nl, ")", nl)
+			if bs[len(bs)-1] == '\n' {
+				buf.WriteString(")\n")
 			} else {
-				err = fprint(&buf, ")", nl)
+				buf.WriteString("\n)\n")
 			}
+		} else if bs[len(bs)-1] != '\n' {
+			buf.WriteString("\n")
 		}
+		buf.WriteString("\n")
+		_, err = output.Write(buf.Bytes())
 
-		bs, err = format.Source(buf.Bytes())
 		if err != nil {
-			return
-		}
-		// 替换"\t"缩进
-		bs = bytes.Replace(bs, nltab, nlspaces, -1)
-		_, err = output.Write(bs)
-
-		if err = fprint(output, nl+nl); err != nil {
 			return
 		}
 	}
