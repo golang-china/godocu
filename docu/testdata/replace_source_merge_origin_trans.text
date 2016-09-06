@@ -1,0 +1,130 @@
+// +build ingore
+
+// package comments
+
+// package comments trans
+package testdata
+
+import (
+	"fmt"
+	"runtime"
+)
+
+// Wrap existing text at 80 characters. Wrap existing text at 80 characters.
+// Wrap existing text at 80 characters.
+const Docu = "sql: no rows in result set" // comment Docu
+
+const Hi = 1 // comment Hi
+
+// Wrap existing text at 80 characters. Wrap existing text at 80 characters.
+// Wrap existing text at 80 characters. Wrap existing text at 80 characters.
+// Wrap existing text at 80 characters.
+//
+// 	This line should be kept as it is, is not wrapped. tab not to spaces	tab not to spaces
+
+// 超 80 列折行. 超 80 列折行. 超 80 列折行. 超 80 列折行. 超 80 列折行. 超 80
+// 列折行.
+const (
+	_ = iota
+
+	// ok
+
+	// trans comments
+	Ok // is ok
+
+	// regular file
+
+	// 普通文件
+	TypeReg  = '0' // regular file // 普通文件
+	TypeLink = '1' // hard link // 硬链接
+
+	// Tabs are reserved		between the lines
+
+	// 行间的制表符		被保留
+	Link1 = '1'      // 1
+	Link2 = "333333" // 3
+	Want             // comments
+)
+
+var One, Two int = 1, 2
+
+var (
+	Three, Four int = 3, 4
+	Five, Six       = 5, 6
+)
+
+type (
+	// CSS encapsulates known safe content that matches any of:
+	//
+	// 	1. This line should be kept as it is, is not wrapped. tab not to spaces	tab not to spaces
+
+	// CSS用于包装匹配如下任一条的已知安全的内容：
+	//
+	// 	1. 此行应该保持原样，不折行.	此行应该保持原样，不折行. tab 不转空格	tab 不转空格
+	CSS string // CSS encapsulates // CSS3 样式表
+
+	// Wrap existing text at 80 characters. Wrap existing text at 80 characters.
+	// Wrap existing text at 80 characters.
+
+	// 超 80 列折行. 超 80 列折行. 超 80 列折行. 超 80 列折行. 超 80 列折行. 超
+	// 80 列折行.
+	Wrap struct {
+		// Name of ....
+
+		// 此翻译把 Name 和 Err 分开写了
+		Name, Err string // Name // 结构差异
+
+		// Origin
+
+		// trans comments
+		Text string
+	}
+
+	// Error describes a problem encountered during template Escaping.
+
+	// Error 描述在模板转义时出现的错误。
+	Error struct {
+		// ErrorCode describes the kind of error.
+
+		// ErrorCode
+		ErrorCode ErrorCode
+		Name      string
+		Line      int
+
+		// Description is a human-readable description of the problem.
+
+		// Description 是人类可读的问题描述。
+		Description string
+		Call        func(string) string // comments
+	}
+)
+
+// The Interface interface identifies a run time error.
+
+// Interface 接口用于标识运行时错误。
+type Interface interface {
+	error
+	fmt.Stringer
+
+	// RuntimeError is a no-op function but
+	// serves to distinguish types that are run time
+	// errors from ordinary errors: a type is a
+	// run time error if it has a RuntimeError method.
+
+	// RuntimeError 是一个无操作函数，它只用于区分是运行时错误还是一般错误：
+	// 若一个类型拥有 RuntimeError 方法，它就是运行时错误。
+	RuntimeError(t1, v t2) (int, error)
+}
+
+type Temp Template // origin comments // trans comments
+
+// comments
+
+// trans comments
+type Template struct {
+	Temp
+}
+
+func Call(a, b string, c int, d ...bool) (e, f string)
+
+func (e Error) Error() string

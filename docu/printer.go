@@ -2,7 +2,6 @@ package docu
 
 import (
 	"bytes"
-	"fmt"
 	"go/ast"
 	"go/doc"
 	"go/printer"
@@ -29,50 +28,50 @@ func Resultsify(results string) string {
 	return " (" + results + ")"
 }
 
-// ToText 以 4 空格缩进输出 godoc 风格的纯文本注释.
-func ToText(output io.Writer, text string) error {
-	return FormatComments(output, text, "    ", 76)
-}
+var prefix = []string{"// ", "\t// ", "\t\t// "}
+var indents = []string{"", "\xff\t\xff", "\xff\t\t\xff"}
+var rawindents = []string{"", "\t", "\t\t"}
 
-// ToSource 以 4 空格缩进输出 go source 风格的注释.
-func ToSource(output io.Writer, text string) error {
-	return FormatComments(output, text, "// ", 77)
-}
-
-func formatTrans(output io.Writer, prefix string, limit int,
-	trans *ast.CommentGroup, comments []*ast.CommentGroup) (err error) {
-	if trans == nil {
-		return fprint(output, nl)
+// Format 调用 LineWrapper 换行格式化注释 doc 输出到 output.
+// indent 是 "\t" 缩进个数, 值范围为 0,1,2.
+// 如果 doc 是合并文档, 包含 GoDocu_Dividing_line, 表示输出双语文档.
+// 如果 doc 非双语文档且 comments 非 nil, 则在 comments 中查找并输出 OriginDoc.
+func Format(output io.Writer, indent int,
+	doc *ast.CommentGroup, comments []*ast.CommentGroup) (err error) {
+	if doc == nil {
+		return
 	}
-	// 兼容 merge 造成的问题
-	text := trans.Text()
-	if comments == nil || strings.Index(text, GoDocu_Dividing_line) != -1 {
-		return FormatComments(output, text, prefix, limit)
+	source, text := SplitComments(doc.Text())
+	if source == "" && comments != nil {
+		source = OriginDoc(comments, doc).Text()
 	}
-
-	pos := findCommentPrev(trans.Pos(), comments)
-	if pos != -1 {
-		err = FormatComments(output, comments[pos].Text(), prefix, limit)
-		if err == nil {
-			err = fprint(output, nl)
+	if source == "" && text == "" {
+		return
+	}
+	if source != "" {
+		source = WrapComments(source, prefix[indent], 77-indent*4)
+	}
+	if text != "" {
+		text = WrapComments(text, prefix[indent], 77-indent*4)
+	}
+	tw, istw := output.(*tabwriter.Writer)
+	// 防止 Wrap 后结果一样
+	if source != "" && source != text {
+		if istw {
+			err = fprint(output, tabEscapes, source, tabEscapes, nl)
+		} else {
+			err = fprint(output, source, nl)
 		}
 	}
-
-	if err == nil {
-		err = FormatComments(output, text, prefix, limit)
-	}
-	return
-}
-
-// FormatComments 调用 LineWrapper 换行格式化注释 text 输出到 output.
-func FormatComments(output io.Writer, text, prefix string, limit int) (err error) {
-	var source string
-	source, text = SplitComments(text)
-	if source != "" {
-		_, err = io.WriteString(output, WrapComments(source, prefix, limit)+"\n")
-	}
 	if text != "" && err == nil {
-		_, err = io.WriteString(output, WrapComments(text, prefix, limit))
+		if istw {
+			err = fprint(output, tabEscapes, text, tabEscapes)
+		} else {
+			err = fprint(output, text)
+		}
+	}
+	if err == nil && tw != nil {
+		err = tw.Flush()
 	}
 	return
 }
@@ -80,20 +79,50 @@ func isNotSpace(r rune) bool {
 	return !unicode.IsSpace(r)
 }
 
-// WrapComments 优化调用 LineWrapper.
-// 如果 !IsWrapped(text, limit) 对 text 连续行进行折叠.
+// WrapComments 对 text 连续行进行折叠后调用 LineWrapper.
 func WrapComments(text, prefix string, limit int) string {
 	var buf bytes.Buffer
 	if text == "" {
 		return ""
 	}
-	if !IsWrapped(text, limit) {
-		doc.ToText(&buf, text, "", "    ", 1<<32)
-		text = buf.String()
-	} else {
+	offset := wrappedBefor(text, limit)
+	if offset == len(text) {
 		limit = 1 << 32
+	} else {
+		doc.ToText(&buf, text, "", "\t", 1<<32)
+		text = buf.String()
 	}
 	return LineWrapper(text, prefix, limit)
+}
+
+// wrappedBefor 返回 text 首个行长度大于 limit 的行首偏移量.
+// 如果满足 limit, 返回 len(text)
+// tab 按四个长度计算, 多字节按两个长度计算.
+func wrappedBefor(text string, limit int) int {
+	offset, w := 0, 0
+
+	for i, r := range text {
+		if w == 0 {
+			offset = i
+		}
+		switch r {
+		case '\n':
+			w = 0
+			w += 4
+		case '\t':
+			w = w/4*4 + 4
+		default:
+			if r > unicode.MaxLatin1 {
+				w += 2
+			} else {
+				w++
+			}
+		}
+		if w > limit {
+			return offset
+		}
+	}
+	return len(text)
 }
 
 // SplitComments 以 GoDocu_Dividing_line 分割 text 为两部分.
@@ -103,8 +132,7 @@ func SplitComments(text string) (string, string) {
 	if n == -1 {
 		return "", text
 	}
-	return strings.TrimRightFunc(text[:n], unicode.IsSpace),
-		strings.TrimLeftFunc(text[n+len(GoDocu_Dividing_line):], unicode.IsSpace)
+	return text[:n], text[n+len(GoDocu_Dividing_line)+1:]
 }
 
 // UrlPos 识别 text 第一个网址出现的位置.
@@ -125,39 +153,8 @@ func UrlPos(text string) (pos int) {
 	return
 }
 
-// IsWrapped 检查 text 每一行的长度都小于等于 limit.
-// tab 按四个长度计算, 多字节按两个长度计算.
-func IsWrapped(text string, limit int) bool {
-	w := 0
-	for _, r := range text {
-		switch r {
-		case '\n':
-			w = 0
-			w += 4
-		case '\t':
-		default:
-			if r > unicode.MaxLatin1 {
-				w += 2
-			} else {
-				w++
-			}
-		}
-		if w > limit {
-			return false
-		}
-	}
-	return true
-}
-
-func visualWidth(text string) (w int) {
-	for _, r := range text {
-		if r > unicode.MaxLatin1 {
-			w += 2
-		} else {
-			w++
-		}
-	}
-	return
+func urlEnd(r rune) bool {
+	return r == 0 || runeWidth(r) == 2 || unicode.IsSpace(r)
 }
 
 func firstWidth(text string) (w int) {
@@ -206,7 +203,7 @@ func limitPos(text string, limit int) (int, rune) {
 		if w == -1 {
 			return len(text), 0
 		}
-		return w, 0
+		return w, '\n'
 	}
 
 	w, ww = 0, 1
@@ -240,10 +237,6 @@ func limitPos(text string, limit int) (int, rune) {
 		return ps, pr
 	}
 	return len(text), 0
-}
-
-func urlEnd(r rune) bool {
-	return r == 0 || runeWidth(r) == 2 || unicode.IsSpace(r)
 }
 
 // LineWrapper 把 text 非缩进行超过显示长度 limit 的行插入换行符 "\n".
@@ -281,194 +274,71 @@ func LineWrapper(text string, prefix string, limit int) (wrap string) {
 			}
 		}
 
-		if text[0] == '\t' {
-			i := 0
-			for ; i < len(text); i++ {
-				if text[i] != '\t' {
-					break
-				}
-				last += "    "
-			}
-			last += text[i:pos]
-		} else {
-			last = text[:pos]
-		}
+		last = text[:pos]
 
 		wrap += strings.TrimRightFunc(prefix+last, unicode.IsSpace) + nl
 
-		if len(text) != pos && text[pos] == '\n' {
+		if len(text) != pos && r == '\n' {
 			text = text[pos+1:]
 		} else {
 			text = strings.TrimLeftFunc(text[pos:], unicode.IsSpace)
 		}
-
 	}
-
-	prefix = strings.TrimRightFunc(prefix, unicode.IsSpace)
-	if prefix != "" {
-		prefix += nl
-		for strings.HasPrefix(wrap, prefix) {
-			wrap = wrap[len(prefix):]
-		}
+	// 剔除前部和尾部多余的空白行
+	prefix = strings.TrimRightFunc(prefix, unicode.IsSpace) + nl
+	for strings.HasPrefix(wrap, prefix) {
+		wrap = wrap[len(prefix):]
 	}
-	if wrap == "" || wrap[len(wrap)-1] != '\n' {
+	for strings.HasSuffix(wrap, prefix) {
+		wrap = wrap[:len(wrap)-len(prefix)]
+	}
+	if wrap != "" && wrap[len(wrap)-1] != '\n' {
 		wrap += nl
 	}
-	return wrap
-}
-
-func fprint(output io.Writer, i ...interface{}) (err error) {
-	if output != nil {
-		_, err = fmt.Fprint(output, i...)
-	}
-	return err
-}
-
-var config = printer.Config{Mode: printer.UseSpaces, Tabwidth: 4}
-
-// Godoc 仿 godoc 风格向 output 输出已排序的 ast.File.
-func Godoc(output io.Writer, paths string, fset *token.FileSet, file *ast.File) (err error) {
-	text := file.Name.String()
-	if err = fprint(output, "PACKAGE DOCUMENTATION\n\npackage ", text, nl); err != nil {
-		return
-	}
-
-	if pos := strings.LastIndex(paths, "::"); pos != -1 {
-		paths = paths[:pos]
-	}
-
-	if text == "main" {
-		// BUG: 可能是 +build ignore
-		text = `    EXECUTABLE PROGRAM IN PACKAGE ` + paths
-	} else if text == "test" || strings.HasSuffix(text, "_test") {
-		text = `    go test ` + paths
-	} else if text = CanonicalImportPaths(file); text != "" {
-		text = `    ` + text
-	}
-	if text != "" {
-		err = fprint(output, text, nl)
-	}
-	if err == nil && file.Doc != nil {
-		if err = fprint(output, nl); err == nil {
-			err = ToText(output, file.Doc.Text())
-		}
-	}
-
-	if err == nil && len(file.Imports) != 0 {
-		err = fprint(output, "\nIMPORTS\n\n", ImportsString(file.Imports))
-	}
-	if err != nil {
-		return
-	}
-
-	step := ImportNum
-	for _, decl := range file.Decls {
-		num := NodeNumber(decl)
-		if num == ImportNum {
-			continue
-		}
-
-		if num == FuncNum || num == MethodNum {
-			fdecl := decl.(*ast.FuncDecl)
-			if step != num {
-				if num == FuncNum {
-					err = fprint(output, "\nFUNCTIONS\n")
-				} else {
-					err = fprint(output, "\nMETHODS\n")
-				}
-				if err != nil {
-					return
-				}
-				step = num
-			}
-			err = fprint(output, nl, FuncLit(fdecl), nl)
-			if err == nil && fdecl.Doc != nil {
-				err = ToText(output, fdecl.Doc.Text())
-			}
-			if err != nil {
-				return
-			}
-			continue
-		}
-
-		genDecl := decl.(*ast.GenDecl)
-		if genDecl == nil || len(genDecl.Specs) == 0 {
-			continue
-		}
-
-		if step != num {
-			step = num
-			switch num {
-			case TypeNum:
-				err = fprint(output, "\nTYPES\n")
-			case ConstNum:
-				err = fprint(output, "\nCONSTANTS\n")
-			case VarNum:
-				err = fprint(output, "\nVARIABLES\n")
-			}
-			if err != nil {
-				return
-			}
-		}
-		docGroup := genDecl.Doc
-		genDecl.Doc = nil
-		if err = fprint(output, nl); err != nil {
-			return
-		}
-		if err = config.Fprint(output, fset, genDecl); err != nil {
-			return
-		}
-		if err = fprint(output, nl); err != nil {
-			return
-		}
-		if err = ToText(output, docGroup.Text()); err != nil {
-			return
-		}
-		genDecl.Doc = docGroup
-	}
-	if err != nil {
-		return
-	}
-
-	if text = License(file); text != "" {
-		if err = fprint(output, "\nLICENSE\n\n"); err == nil {
-			err = ToText(output, text)
-		}
-	}
-
 	return
 }
 
+func fprint(output io.Writer, ss ...string) (err error) {
+	if output != nil {
+		for i := 0; err == nil && i < len(ss); i++ {
+			if ss[i] != "" {
+				_, err = io.WriteString(output, ss[i])
+			}
+		}
+	}
+	return
+}
+
+var config = printer.Config{Mode: printer.TabIndent, Tabwidth: 4}
+var emptyfset = token.NewFileSet()
 var tabEscape = []byte{tabwriter.Escape}
+var tabEscapes = string(tabEscape)
 
-// DocGo 以 go source 风格向 output 输出已排序的 ast.File.
-// NOTE: 未来计划去掉参数 fset.
-func DocGo(output io.Writer, paths string, fset *token.FileSet, file *ast.File) (err error) {
-	var buf bytes.Buffer
-	var bs []byte
+func fprintExpr(w io.Writer, expr ast.Expr, before ...string) (err error) {
+	if err = fprint(w, before...); err == nil {
+		err = config.Fprint(w, emptyfset, expr)
+	}
+	return
+}
+
+// Fprint 以 go source 风格向 output 输出已排序的 ast.File.
+func Fprint(output io.Writer, file *ast.File) (err error) {
 	var text string
-	var doc *ast.CommentGroup
 	var comments []*ast.CommentGroup
-
-	var ts *ast.TypeSpec
-	var vs *ast.ValueSpec
-	var fields *ast.FieldList
 
 	if IsGodocuFile(file) {
 		comments = file.Comments
 	}
 
-	if text = License(file); text != "" {
-		if err = ToSource(output, text); err == nil {
-			err = fprint(output, nl)
-		}
+	if text, _ = License(file); text != "" {
+		err = fprint(output, LineWrapper(text, "// ", 77), nl)
 	}
 	if err == nil {
 		err = fprint(output, "// +build ingore\n\n")
 	}
 
-	if err == nil && file.Doc != nil {
-		err = formatTrans(output, "// ", 77, file.Doc, comments)
+	if err == nil {
+		err = Format(output, 0, file.Doc, comments)
 	}
 	if err != nil {
 		return
@@ -476,15 +346,7 @@ func DocGo(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 
 	text = file.Name.String()
 
-	if pos := strings.LastIndex(paths, "::"); pos != -1 {
-		paths = paths[:pos]
-	}
-
-	if text == "main" {
-		text += " // go get " + paths
-	} else if text == "test" || strings.HasSuffix(text, "_test") {
-		text += " // go test " + paths
-	} else if imp := CanonicalImportPaths(file); imp != "" {
+	if imp := CanonicalImportPaths(file); imp != "" {
 		text += ` // ` + imp
 	}
 
@@ -493,160 +355,299 @@ func DocGo(output io.Writer, paths string, fset *token.FileSet, file *ast.File) 
 	if err == nil && len(file.Imports) != 0 {
 		err = fprint(output, ImportsString(file.Imports), nl)
 	}
+
+	if err != nil {
+		return
+	}
+	for _, node := range file.Decls {
+		switch n := node.(type) {
+		case *ast.GenDecl:
+			switch n.Tok {
+			default:
+				continue
+			case token.CONST, token.VAR:
+				err = FprintGenDecl(output, n, comments)
+			case token.TYPE:
+				err = FprintGenDecl(output, n, comments)
+			}
+		case *ast.FuncDecl:
+			err = FprintFuncDecl(output, n, comments)
+		}
+		if err == nil {
+			err = fprint(output, nl)
+		}
+		if err != nil {
+			break
+		}
+	}
+	return
+}
+
+// FprintFuncDecl 向 w 输出顶级函数声明 fn. comments 用于输出双语文档.
+func FprintFuncDecl(w io.Writer, fn *ast.FuncDecl, comments []*ast.CommentGroup) (err error) {
+	err = Format(w, 0, fn.Doc, comments)
+	if err == nil {
+		err = fprint(w, MethodLit(fn), nl)
+	}
+	return
+}
+
+// FprintGenDecl 向 w 输出顶级声明 decl. comments 用于输出双语文档.
+func FprintGenDecl(w io.Writer, decl *ast.GenDecl, comments []*ast.CommentGroup) (err error) {
+	if decl == nil || len(decl.Specs) == 0 || decl.Tok == token.IMPORT {
+		return
+	}
+	if err = Format(w, 0, decl.Doc, comments); err != nil {
+		return
+	}
+
+	switch decl.Tok {
+	case token.CONST:
+		err = fprint(w, "const ")
+	case token.VAR:
+		err = fprint(w, "var ")
+	case token.TYPE:
+		err = fprint(w, "type ")
+	}
+
 	if err != nil {
 		return
 	}
 
-	w := tabwriter.NewWriter(&buf, 4, 4, 1, ' ', tabwriter.StripEscape)
-	for _, decl := range file.Decls {
-		num := NodeNumber(decl)
-		if num == ImportNum || num > MethodNum {
+	indent := 0
+	tw := NewWriter(w)
+	if decl.Lparen.IsValid() {
+		indent = 1
+		err = fprint(tw, "(\n")
+	}
+
+	out := false
+	for _, spec := range decl.Specs {
+		if spec == nil {
 			continue
 		}
-
-		if num == FuncNum || num == MethodNum {
-			fdecl := decl.(*ast.FuncDecl)
-			if fdecl.Doc != nil {
-				if err = formatTrans(output, "// ", 77, fdecl.Doc, comments); err != nil {
-					return
+		switch decl.Tok {
+		case token.CONST, token.VAR:
+			vs := spec.(*ast.ValueSpec)
+			if out && vs.Doc != nil {
+				if err = fprint(tw, nl); err != nil {
+					break
 				}
 			}
-
-			err = fprint(output, FuncLit(fdecl), nl+nl)
-
-			if err != nil {
-				return
+			err = FprintValueSpec(tw, indent, vs, comments)
+		case token.TYPE:
+			vs := spec.(*ast.TypeSpec)
+			if out {
+				if err = fprint(tw, "\f"); err != nil {
+					break
+				}
 			}
-			continue
+			err = FprintTypeSpec(tw, indent, vs, comments)
 		}
 
-		genDecl, _ := decl.(*ast.GenDecl)
-		if genDecl == nil || len(genDecl.Specs) == 0 {
-			continue
+		if err != nil {
+			break
 		}
+		out = true
+	}
 
-		if err = formatTrans(output, "// ", 77, genDecl.Doc, comments); err != nil {
-			return
-		}
+	if out && err == nil && decl.Lparen.IsValid() {
+		err = fprint(tw, ")\n")
+	}
 
-		buf.Truncate(0)
-		prefix, ident := "// ", ""
+	if err == nil {
+		err = tw.Flush()
+	}
+	return
+}
 
-		if genDecl.Lparen.IsValid() {
-			fprint(&buf, numNames[num], "(\n")
-			prefix = "    //"
-			ident = "    "
+// NewWriter 返回适用 Docu 的 tabwriter.Writer 实例.
+func NewWriter(w io.Writer) *tabwriter.Writer {
+	tw, ok := w.(*tabwriter.Writer)
+	if !ok {
+		tw = tabwriter.NewWriter(w, 0, 4, 1, ' ',
+			tabwriter.StripEscape|tabwriter.DiscardEmptyColumns)
+	}
+	return tw
+}
+
+// FprintValueSpec 向 w 输出 vs. indent 是 tab 缩进个数, comments 用于输出双语文档.
+func FprintValueSpec(w *tabwriter.Writer, indent int,
+	vs *ast.ValueSpec, comments []*ast.CommentGroup) (err error) {
+
+	if err = Format(w, indent, vs.Doc, comments); err == nil {
+		err = fprint(w, indents[indent], IdentsLit(vs.Names))
+	}
+	if err != nil {
+		return
+	}
+
+	if vs.Type != nil {
+		err = fprintExpr(w, vs.Type, "\v")
+	} else if len(vs.Values) != 0 || vs.Comment != nil {
+		err = fprint(w, "\v")
+	} else {
+		err = fprint(w, nl)
+		return
+	}
+
+	for i, expr := range vs.Values {
+		if i == 0 {
+			err = fprintExpr(w, expr, "\v= ")
 		} else {
-			fprint(&buf, numNames[num])
+			err = fprintExpr(w, expr, ", ")
 		}
-		limit := 80 - len(prefix)
-
-		out := false
-		for _, spec := range genDecl.Specs {
-			if spec == nil {
-				continue
-			}
-
-			fields, vs, ts = nil, nil, nil
-			if genDecl.Tok != token.TYPE {
-				vs = spec.(*ast.ValueSpec)
-				doc, vs.Doc = vs.Doc, nil
-			} else {
-				ts = spec.(*ast.TypeSpec)
-				doc, ts.Doc = ts.Doc, nil
-				if st, _ := ts.Type.(*ast.StructType); st != nil && st.Struct.IsValid() {
-					fields = st.Fields
-				}
-			}
-
-			// type 分组声明加换行; 前置块注释加换行
-			if out && genDecl.Tok == token.TYPE ||
-				out && doc != nil && len(doc.List) != 0 {
-				err = fprint(w, nl)
-				if err != nil {
-					return
-				}
-			}
-			out = true
-			if doc != nil && len(doc.List) != 0 {
-				w.Write(tabEscape)
-				formatTrans(w, prefix, limit, doc, comments)
-				w.Write(tabEscape)
-			}
-
-			if fields == nil {
-				if ts != nil {
-					fprint(w, ident, ts.Name.String(), "\t", types.ExprString(ts.Type))
-					if ts.Comment != nil {
-						fprint(w, "\t// ", strings.TrimSpace(ts.Comment.Text()), nl)
-					} else {
-						fprint(w, nl)
-					}
-					continue
-				}
-				fprint(w, ident, IdentsLit(vs.Names))
-				if vs.Type != nil {
-					fprint(w, "\t", types.ExprString(vs.Type))
-				}
-				for i, expr := range vs.Values {
-					if i == 0 {
-						fprint(w, "\t= ", types.ExprString(expr))
-					} else {
-						fprint(w, ", ", types.ExprString(expr))
-					}
-				}
-				if vs.Comment != nil {
-					fprint(w, "\t// ", strings.TrimSpace(vs.Comment.Text()), nl)
-				} else {
-					fprint(w, nl)
-				}
-				continue
-			}
-			fprint(w, ident, ts.Name.String(), " struct {\n")
-			for _, field := range fields.List {
-				doc = field.Doc
-				if doc != nil && len(doc.List) != 0 {
-					w.Write(tabEscape)
-					formatTrans(w, "    "+prefix, limit-4, doc, comments)
-					w.Write(tabEscape)
-				}
-
-				fprint(w, "    ", ident, IdentsLit(field.Names), "\t",
-					types.ExprString(field.Type))
-
-				if field.Tag != nil {
-					fprint(w, " ", field.Tag.Value)
-				}
-				if field.Comment != nil {
-					fprint(w, "\t// ", field.Comment.Text())
-				} else {
-					fprint(w, "\n")
-				}
-			}
-			fprint(w, ident+"}\n")
-		}
-		w.Flush()
-
-		bs = buf.Bytes()
-		if genDecl.Lparen.IsValid() {
-			if bs[len(bs)-1] == '\n' {
-				buf.WriteString(")\n")
-			} else {
-				buf.WriteString("\n)\n")
-			}
-		} else if bs[len(bs)-1] != '\n' {
-			buf.WriteString("\n")
-		}
-		buf.WriteString("\n")
-		_, err = output.Write(buf.Bytes())
-
 		if err != nil {
 			return
 		}
 	}
-
+	if err != nil {
+		return
+	}
+	if vs.Comment != nil {
+		if len(vs.Values) == 0 {
+			if err = fprint(w, "\v"); err != nil {
+				return
+			}
+		}
+		err = fprint(w, "\v", tabEscapes,
+			trimNL(comments, vs.Comment), tabEscapes, nl)
+	} else {
+		err = fprint(w, nl)
+	}
 	return
 }
 
-var nltab = []byte("\n\t")
-var nlspaces = []byte("\n    ")
+// FprintTypeSpec 向 w 输出 ts. indent 是 tab 缩进个数, comments 用于输出双语文档.
+func FprintTypeSpec(w *tabwriter.Writer, indent int,
+	ts *ast.TypeSpec, comments []*ast.CommentGroup) (err error) {
+
+	if err = Format(w, indent, ts.Doc, comments); err == nil {
+		err = fprint(w, indents[indent], ts.Name.String())
+	}
+	if err != nil {
+		return
+	}
+
+	if st, ok := ts.Type.(*ast.StructType); ok {
+		fprint(w, " struct {\f")
+		if err = FprintFieldList(w, indent+1, st.Fields, comments); err == nil {
+			err = fprint(w, indents[indent], "}\f")
+		}
+		return
+	}
+
+	if st, ok := ts.Type.(*ast.InterfaceType); ok {
+		fprint(w, " interface {\f")
+		if err = FprintMethods(w, indent+1, st.Methods, comments); err == nil {
+			err = fprint(w, indents[indent], "}\f")
+		}
+		return
+	}
+
+	err = fprintExpr(w, ts.Type, "\v")
+	if err != nil {
+		return
+	}
+	if ts.Comment != nil {
+		err = fprint(w, "\v", tabEscapes,
+			trimNL(comments, ts.Comment), tabEscapes, nl)
+	} else {
+		err = fprint(w, nl)
+	}
+	return
+}
+
+// FprintFieldList 向 w 输出 fields. indent 是 tab 缩进个数, comments 用于输出双语文档.
+func FprintFieldList(w *tabwriter.Writer, indent int, fields *ast.FieldList, comments []*ast.CommentGroup) (err error) {
+	for i, field := range fields.List {
+		if field.Doc != nil {
+			// 注释前加换行
+			if i != 0 {
+				fprint(w, nl)
+			}
+			if err = Format(w, indent, field.Doc, comments); err != nil {
+				break
+			}
+		}
+		if len(field.Names) == 0 {
+			err = fprintExpr(w, field.Type, indents[indent])
+		} else {
+			err = fprintExpr(w, field.Type, indents[indent], IdentsLit(field.Names), "\v")
+		}
+		if err == nil && field.Tag != nil {
+			err = fprint(w, " ", field.Tag.Value)
+		}
+
+		if err == nil && field.Comment != nil {
+			err = fprint(w, "\v", tabEscapes,
+				trimNL(comments, field.Comment), tabEscapes, nl)
+		} else if err == nil {
+			err = fprint(w, nl)
+		}
+		if err != nil {
+			break
+		}
+	}
+	if err == nil {
+		err = w.Flush()
+	}
+	return
+}
+
+// FprintMethods 向 w 输出接口的 methods. indent 是 tab 缩进个数, comments 用于输出双语文档.
+func FprintMethods(w *tabwriter.Writer, indent int, methods *ast.FieldList, comments []*ast.CommentGroup) (err error) {
+	for i, field := range methods.List {
+		if field.Doc != nil {
+			// 注释前加换行
+			if i != 0 {
+				fprint(w, nl)
+			}
+			if err = Format(w, indent, field.Doc, comments); err != nil {
+				return
+			}
+		}
+		if ftyp, isFtyp := field.Type.(*ast.FuncType); isFtyp {
+			// method
+			lit := FieldListLit(ftyp.Results)
+
+			if lit != "" && (len(ftyp.Results.List) > 1 ||
+				len(ftyp.Results.List[0].Names) != 0) {
+				lit = " (" + lit + ")"
+			}
+			fprint(w, indents[indent], field.Names[0].String(),
+				"("+FieldListLit(ftyp.Params)+")", lit)
+		} else {
+			// embedded interface
+			fprint(w, indents[indent], types.ExprString(field.Type))
+		}
+
+		if field.Comment != nil {
+			fprint(w, "\t", tabEscapes,
+				trimNL(comments, field.Comment), tabEscapes, nl)
+		} else {
+			fprint(w, nl)
+		}
+	}
+	err = w.Flush()
+	return
+}
+
+func trimNL(comments []*ast.CommentGroup, comment *ast.CommentGroup) string {
+	ClearComment(comments, comment)
+	isblock := len(comment.List) != 0 && comment.List[0].Text[1] == '*'
+
+	s := comment.Text()
+	l := len(s)
+	if l > 0 && s[l-1] == '\n' {
+		s = s[:l-1]
+	}
+	if len(s) != 0 {
+		if isblock {
+			s = "/*" + s + "*/"
+		} else {
+			s = "// " + s
+		}
+	}
+	return s
+}

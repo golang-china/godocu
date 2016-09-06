@@ -1,0 +1,87 @@
+// package comments
+package testdata
+
+import (
+	"fmt"
+	"runtime"
+)
+
+var One, Two int = 1, 2
+
+var (
+	Three, Four int = 3, 4
+	Five, Six       = 5, 6
+)
+
+// Wrap existing text at 80 characters. Wrap existing text at 80 characters. Wrap existing text at 80 characters.
+const Docu = "sql: no rows in result set" // comment Docu
+
+const Hi = 1 // comment Hi
+// Wrap existing text at 80 characters. Wrap existing text at 80 characters.
+// Wrap existing text at 80 characters. Wrap existing text at 80 characters. Wrap existing text at 80 characters.
+//	This line should be kept as it is, is not wrapped. tab not to spaces	tab not to spaces
+const ( // this comment is discarded
+	_ = iota
+	// ok
+	Ok // is ok
+	// regular file
+	TypeReg  = '0' // regular file
+	TypeLink = '1' // hard link
+	// Tabs are reserved		between the lines
+	Link1 = '1'      // 1
+	Link2 = "333333" // 3
+	_
+	Want // comments
+)
+
+// The Interface interface identifies a run time error.
+type Interface interface {
+	error
+	fmt.Stringer
+	// RuntimeError is a no-op function but
+	// serves to distinguish types that are run time
+	// errors from ordinary errors: a type is a
+	// run time error if it has a RuntimeError method.
+	RuntimeError(t1, v t2) (int, error)
+}
+
+// comments
+type Template struct { // this comment is discarded
+	Temp
+}
+
+type Temp Template // comments Temp
+
+type (
+	// CSS encapsulates known safe content that matches any of:
+	//
+	//     1. This line should be kept as it is, is not wrapped. tab not to spaces	tab not to spaces
+	CSS string // CSS encapsulates
+
+	// Wrap existing text at 80 characters. Wrap existing text at 80 characters. Wrap existing text at 80 characters.
+	Wrap struct { // this comment is discarded
+		// Name of ....
+		Name, Err string // Name
+		// Origin
+		Text string
+	}
+
+	// Error describes a problem encountered during template Escaping.
+	Error struct {
+		// ErrorCode describes the kind of error.
+		ErrorCode ErrorCode
+		Name      string
+		Line      int
+		// Description is a human-readable description of the problem.
+		Description string
+		Call        func(
+			string,
+		) string // comments
+	}
+)
+
+func Call(a, b string, c int, d ...bool) (e, f string)
+
+func (e Error) Error() string {
+	return fmt.Sprint(runtime.GOOS)
+}

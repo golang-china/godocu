@@ -192,7 +192,6 @@ func (s SortDecl) SearchSpec(specIdentLit string) (ast.Spec, *ast.GenDecl, int) 
 }
 
 // Filter 过滤掉 file 中的非导出顶级声明, 如果该声明不在 s 中的话.
-// imports 声明总是被保留.
 func (s SortDecl) Filter(file *ast.File) bool {
 	return exportedFileFilter(file, s)
 }
@@ -206,19 +205,46 @@ func (s SortImports) Less(i, j int) bool {
 	return s[i].Path.Value < s[j].Path.Value
 }
 
-// Index 对 file 顶级声明重新排序. 按照:
+// Index 剔除 file.Decls 中的 import 声明, 并对顶级声明重新排序. 按照:
 //
-//	Imports, Consts, Vars, Types, Funcs, Method
-//
+//	Consts, Vars, Types, Funcs, Method
 func Index(file *ast.File) {
 	if file != nil {
+		clearFile(file)
 		sort.Sort(SortDecl(file.Decls))
+		_, offset := declsOf(ImportNum, file.Decls, 0)
+		for i := 0; i < offset; i++ {
+			decl := file.Decls[i].(*ast.GenDecl)
+			_, comment := SpecComment(decl.Specs[0])
+			ClearComment(file.Comments, comment)
+		}
+		file.Decls = file.Decls[offset:]
 	}
+}
+
+func declsOf(num int, decls []ast.Decl, offset int) ([]ast.Decl, int) {
+	first, last := -1, len(decls)
+	if offset >= 0 && offset < len(decls) {
+		for i, node := range decls[offset:] {
+			if first == -1 {
+				if NodeNumber(node) == num {
+					first = offset + i
+				}
+			} else if NodeNumber(node) > num {
+				last = offset + i
+				break
+			}
+		}
+	}
+	if first == -1 {
+		return nil, offset
+	}
+	return decls[first:last], last
 }
 
 // IndexNormal 对 file 顶级声明进行常规习惯排序, 即:
 //
-//	Imports, Consts, Vars, Funcs, Types [Constructor,Method]
+//	Consts, Vars, Funcs, Types [Constructor,Method]
 //
 func IndexNormal(file *ast.File) {
 	panic("Unimplemented")

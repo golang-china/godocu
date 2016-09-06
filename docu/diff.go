@@ -132,7 +132,6 @@ func Diff(w io.Writer, source, target *ast.File) (diff bool, err error) {
 }
 
 // diffDecls 对比输出两个已排序 []ast.Decl 差异, 返回是否有差异及发生的错误.
-// diffDecls 不比较 import 声明
 func diffDecls(w io.Writer, source, target []ast.Decl) (diff bool, err error) {
 	var out bool
 	sd, so := declsOf(ConstNum, source, 0)
@@ -290,24 +289,4 @@ func diffFuncDecls(w io.Writer, prefix string, source, target []ast.Decl) (diff 
 		}
 	}
 	return
-}
-
-func declsOf(num int, decls []ast.Decl, offset int) ([]ast.Decl, int) {
-	first, last := -1, len(decls)
-	if offset >= 0 && offset < len(decls) {
-		for i, node := range decls[offset:] {
-			if first == -1 {
-				if NodeNumber(node) == num {
-					first = offset + i
-				}
-			} else if NodeNumber(node) > num {
-				last = offset + i
-				break
-			}
-		}
-	}
-	if first == -1 {
-		return nil, offset
-	}
-	return decls[first:last], last
 }

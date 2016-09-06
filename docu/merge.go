@@ -14,7 +14,6 @@ var comment_Dividing_line = &ast.Comment{Text: "//___GoDocu_Dividing_line___"}
 
 // MergeDeclsDoc 添加 source 与 target 中匹配的标识符文档到 target 注释底部
 // 细节:
-//    忽略 ImportSpec
 //    只是排版不同不会被合并
 //    target 应该具有良好的结构, 比如来自源代码
 //    用 source 中的尾注释替换 target 中的尾注释
@@ -50,57 +49,72 @@ func mergeGenDecls(source, target []ast.Decl) {
 	if len(source) == 0 || len(target) == 0 {
 		return
 	}
-	dd := SortDecl(target)
+	trans := SortDecl(source)
 
-	for _, node := range source {
-		decl := node.(*ast.GenDecl)
+	for _, node := range target {
 		first := true
-		for _, spec := range decl.Specs {
-			lit = SpecIdentLit(spec)
+		tdecl := node.(*ast.GenDecl)
+		for _, tspec := range tdecl.Specs {
+			lit = SpecIdentLit(tspec)
 			if lit == "_" {
 				continue
 			}
-			tspec, tdecl, _ := dd.SearchSpec(lit)
-			if tspec == nil {
+			spec, decl, _ := trans.SearchSpec(lit)
+			if spec == nil {
 				continue
 			}
 
 			tdoc, tcomm = SpecComment(tspec)
 			sdoc, scomm = SpecComment(spec)
 
-			// 尾注释
-			if scomm != nil && tcomm != nil {
-				ReplaceDoc(tcomm, scomm)
-			}
-
-			// 独立注释
-			if sdoc != nil && tdoc != nil && sdoc != decl.Doc && tdoc != tdecl.Doc &&
-				!equalComment(sdoc, tdoc) {
-
+			// 解决分组差异
+			// 	// target group
+			// 	var (
+			// 		// target doc
+			// 		target = 1
+			// 	)
+			//	// target doc
+			// 	var target = 1
+			if first {
+				first = false
+				if decl.Lparen.IsValid() == tdecl.Lparen.IsValid() {
+					MergeDoc(decl.Doc, tdecl.Doc)
+					MergeDoc(sdoc, tdoc)
+				} else if tdecl.Lparen.IsValid() {
+					MergeDoc(decl.Doc, tdoc)
+				} else {
+					MergeDoc(sdoc, tdecl.Doc)
+				}
+			} else {
 				MergeDoc(sdoc, tdoc)
 			}
 
-			// 分组注释
-			if first && decl.Lparen.IsValid() && tdecl.Lparen.IsValid() &&
-				decl.Doc != nil && tdecl.Doc != nil && !equalComment(decl.Doc, tdecl.Doc) {
-
-				MergeDoc(decl.Doc, tdecl.Doc)
+			// 尾注释
+			if scomm != nil && tcomm != nil {
+				replaceComment(tcomm, scomm)
 			}
-			first = false
 
-			if decl.Tok != token.TYPE {
+			if decl.Tok != token.TYPE || tdecl.Tok != token.TYPE {
 				continue
 			}
-			// StructType
-			stype, _ := spec.(*ast.TypeSpec)
-			ttype, _ := tspec.(*ast.TypeSpec)
 
-			st, _ := stype.Type.(*ast.StructType)
-			tt, _ := ttype.Type.(*ast.StructType)
-			if st == nil || tt == nil {
+			t, _ := tspec.(*ast.TypeSpec)
+			s, _ := spec.(*ast.TypeSpec)
+			if s == nil || t == nil {
 				continue
 			}
-			mergeFieldsDoc(st.Fields, tt.Fields)
+			switch tt := t.Type.(type) {
+			case *ast.StructType:
+				ss, _ := s.Type.(*ast.StructType)
+				if ss != nil && tt != nil {
+					mergeFieldsDoc(ss.Fields, tt.Fields)
+				}
+			case *ast.InterfaceType:
+				ss, _ := s.Type.(*ast.InterfaceType)
+				if ss != nil && tt != nil {
+					mergeFieldsDoc(ss.Methods, tt.Methods)
+				}
+			}
 		}
 	}
 	return
@@ -122,16 +136,13 @@ func mergeFieldsDoc(source, target *ast.FieldList) {
 				continue
 			}
 			f, _ := findField(source, lit)
-			if f != nil && f.Doc != nil && field.Doc != nil &&
-				!equalComment(f.Doc, field.Doc) {
+			if f == nil {
+				continue
+			}
 
-				MergeDoc(f.Doc, field.Doc)
-			}
-			// 尾注释
-			if f != nil && f.Comment != nil && field.Comment != nil &&
-				!equalComment(f.Comment, field.Comment) {
-				ReplaceDoc(field.Comment, f.Comment)
-			}
+			MergeDoc(f.Doc, field.Doc)
+			// 尾注释用替换
+			replaceComment(field.Comment, f.Comment)
 
 			break
 		}
@@ -139,14 +150,12 @@ func mergeFieldsDoc(source, target *ast.FieldList) {
 }
 
 // MergeDoc 合并 source.List 到 target.list 底部.
-// 保持 target.Pos(), target.End() 不变
 // 插入分隔占位字符串 ___GoDocu_Dividing_line___
 func MergeDoc(source, target *ast.CommentGroup) {
-	end := target.End()
-	target.List = append(target.List, comment_Dividing_line)
-	target.List = append(target.List, source.List...)
-	cg := target.List[len(target.List)-1]
-	cg.Slash = token.Pos(int(end) - len(cg.Text))
+	if source != nil && target != nil && !EqualComment(source, target) {
+		target.List = append(target.List, comment_Dividing_line)
+		target.List = append(target.List, source.List...)
+	}
 }
 
 func mergeFuncDecls(source, target []ast.Decl) {
@@ -165,10 +174,9 @@ func mergeFuncDecls(source, target []ast.Decl) {
 
 		lit = FuncIdentLit(decl)
 		tdecl := dd.SearchFunc(lit)
-		if tdecl == nil || tdecl.Doc == nil || equalComment(decl.Doc, tdecl.Doc) {
-			continue
+		if tdecl != nil {
+			MergeDoc(decl.Doc, tdecl.Doc)
 		}
-		MergeDoc(decl.Doc, tdecl.Doc)
 	}
 	return
 }

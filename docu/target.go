@@ -1,8 +1,11 @@
 package docu
 
 import (
+	"bytes"
 	"errors"
 	"go/ast"
+	"io"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,10 +23,40 @@ func IsNormalName(name string) bool {
 	}
 	name = name[:pos]
 	ss := strings.SplitN(name, "_", 2)
-	if ss[0] != "doc" && ss[0] != "main" && ss[0] != "test" {
-		return false
+	return len(ss) == 2 &&
+		(ss[0] == "doc" || ss[0] == "main" || ss[0] == "test") &&
+		IsNormalLang(ss[1])
+}
+
+var declPackage = []byte("\npackage ")
+var plusBuild = []byte("+build")
+var linux = []byte("linux")
+var slashslash = []byte("//")
+
+func buildForLinux(code []byte) bool {
+	pos := bytes.Index(code, declPackage)
+	if pos == -1 {
+		return bytes.HasPrefix(code, declPackage[1:])
 	}
-	return len(ss) == 1 || IsNormalLang(ss[1])
+	code = code[:pos+1]
+
+	for len(code) != 0 {
+		pos = bytes.IndexByte(code, '\n')
+		line := code[:pos]
+		code = code[pos+1:]
+		if !bytes.HasPrefix(line, slashslash) {
+			continue
+		}
+		line = bytes.TrimSpace(line[2:])
+		if !bytes.HasPrefix(line, plusBuild) {
+			continue
+		}
+		line = line[len(plusBuild):]
+		pos = bytes.Index(line, linux)
+		return pos > 0 && line[pos-1] == ' ' &&
+			(pos+len(linux) == len(line) || line[pos+len(linux)] == ' ')
+	}
+	return true
 }
 
 func IsNormalLang(lang string) bool {
@@ -166,58 +199,55 @@ func LookImportPath(abs string) string {
 	return ""
 }
 
-// IsOSArchFile 返回 name 是否为特定平台文件命名
+// OSArchTest 提取并返回 go 文件名 name 中可识别的 goos, goarch, test 部分.
 //     name_$(GOOS).*
 //     name_$(GOARCH).*
 //     name_$(GOOS)_$(GOARCH).*
 //     name_$(GOOS)_test.*
 //     name_$(GOARCH)_test.*
 //     name_$(GOOS)_$(GOARCH)_test.*
-func IsOSArchFile(name string) bool {
-	if dot := strings.Index(name, "."); dot != -1 {
-		name = name[:dot]
+func OSArchTest(name string) (goos, goarch string, test bool) {
+	if !strings.HasSuffix(name, ".go") {
+		return
 	}
-	i := strings.IndexByte(name, '_')
-	if i < 0 {
-		return false
+	name = name[:len(name)-3]
+	if len(name) == 0 {
+		return
 	}
-
-	l := strings.Split(name[i+1:], "_")
-	if n := len(l); n > 0 && l[n-1] == "test" {
-		l = l[:n-1]
+	l := strings.Split(name, "_")[1:]
+	n := len(l)
+	if n == 0 {
+		return
 	}
-
-	if len(l) >= 2 {
-		return contains(goosList, l[0]) && contains(goarchList, l[1])
+	if l[n-1] == "test" {
+		test = true
+		n--
+		l = l[:n]
 	}
-	return contains(goosList, l[0]) || contains(goarchList, l[0])
-}
-
-// IsOSArchFileEx 返回 name 是否为 goos, goarch 之外的平台文件命名
-func IsOSArchFileEx(name, goos, goarch string) bool {
-	if dot := strings.Index(name, "."); dot != -1 {
-		name = name[:dot]
+	if n == 0 {
+		return
 	}
-	i := strings.IndexByte(name, '_')
-	if i < 0 {
-		return false
+	if n >= 2 {
+		l, n = l[n-2:], 2
 	}
 
-	l := strings.Split(name[i+1:], "_")
-	if n := len(l); n > 0 && l[n-1] == "test" {
-		l = l[:n-1]
+	s := l[n-1]
+	if contains(goosList, s) {
+		goos = s
+	} else if contains(goarchList, s) {
+		goarch = s
 	}
-	if len(l) >= 2 {
-		if l[0] == goos && l[1] == goarch {
-			return false
-		}
-		return contains(goosList, l[0]) && contains(goarchList, l[1])
+	if n == 1 || goos == "" && goarch == "" {
+		return
 	}
-	if l[0] == goos || l[0] == goarch {
-		return false
+	s = l[0]
+	if goos == "" && contains(goosList, s) {
+		goos, s = s, ""
 	}
-
-	return contains(goosList, l[0]) || contains(goarchList, l[0])
+	if goarch == "" && contains(goarchList, s) {
+		goarch = s
+	}
+	return
 }
 
 func contains(s, sep string) bool {
@@ -225,108 +255,38 @@ func contains(s, sep string) bool {
 	if pos == -1 {
 		return false
 	}
-
-	return s[pos+len(sep)] == ' '
+	if len(sep) == len(s) {
+		return true
+	}
+	if pos == 0 {
+		return s[pos+len(sep)] == ' '
+	}
+	if pos+len(sep) == len(s) {
+		return s[pos-1] == ' '
+	}
+	return s[pos-1] == ' ' && s[pos+len(sep)] == ' '
 }
 
-// Target 创建(覆盖)统一风格的本地文件.
-type Target string
-
-// Create 在 Target 目录建立 path,lang,ext 对应的文件.
-// 参数:
-//   path 为 Docu.Parse 返回的 paths 元素
-//   lang 写入文件内容所使用的语言.
-//   ext  文件扩展名, 允许为空
-// 最终生成的文件名可能是:
-//   doc_lang.ext
-//   main_lang.ext
-//   test_lang.ext
-func (t Target) Create(path, lang, ext string) (file *os.File, err error) {
-	if t == "" {
-		return os.Stdout, nil
-	}
-	if lang != "" {
-		if lang = LangNormal(lang); lang == "" {
-			err = errors.New("Target.Create: invaild path or lang.")
-			return
+func readSource(filename string, src interface{}) ([]byte, error) {
+	if src != nil {
+		switch s := src.(type) {
+		case string:
+			return []byte(s), nil
+		case []byte:
+			return s, nil
+		case *bytes.Buffer:
+			// is io.Reader, but src is already available in []byte form
+			if s != nil {
+				return s.Bytes(), nil
+			}
+		case io.Reader:
+			var buf bytes.Buffer
+			if _, err := io.Copy(&buf, s); err != nil {
+				return nil, err
+			}
+			return buf.Bytes(), nil
 		}
+		return nil, errors.New("invalid source")
 	}
-
-	if ext != "" && ext[0] != '.' {
-		ext = "." + ext
-	}
-
-	doc := "doc"
-	if pos := strings.Index(path, "::"); pos != -1 {
-		doc, path = path[pos+2:], path[:pos]
-	}
-	if lang != "" {
-		doc += "_" + lang
-	}
-	if ext != "" {
-		if ext[0] != '.' {
-			doc += "."
-		}
-		doc += strings.ToLower(ext)
-	}
-
-	path = filepath.Join(string(t), path, doc)
-	err = os.MkdirAll(filepath.Dir(path), 0777)
-	if err == nil {
-		file, err = os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
-	}
-	return
-}
-
-// NormalPath 如果 Target 下 path 子目录的扩展名为 ext 文件都符合 Docu 命名风格,
-// 返回绝对路径, 否则返回空字符串.
-// 参数:
-//   path 为 Docu.Parse 返回的 paths 元素.
-func (t Target) NormalPath(path, lang, ext string) string {
-	if t == "" {
-		return ""
-	}
-
-	pos := strings.Index(path, "::")
-	if pos != -1 {
-		path = path[:pos]
-	}
-
-	path = filepath.Join(string(t), path)
-	f, err := os.Open(path)
-	if err != nil {
-		return ""
-	}
-	names, err := f.Readdirnames(-1)
-	f.Close()
-	if err != nil {
-		return ""
-	}
-	if ext != "" && ext[0] != '.' {
-		ext = "." + ext
-	}
-	lang = LangNormal(lang)
-	if lang != "" {
-		lang = "_" + lang + ext
-	}
-	find := false
-	for _, name := range names {
-		if ext != "" && !strings.HasSuffix(name, ext) {
-			continue
-		}
-		// 必须都符合规范
-		if !IsNormalName(name) {
-			return ""
-		}
-		// 特定 lang 也要有
-		if lang != "" && !strings.HasSuffix(name, lang) {
-			continue
-		}
-		find = true
-
-	}
-	if !find {
-		return ""
-	}
-	return path
+	return ioutil.ReadFile(filename)
 }

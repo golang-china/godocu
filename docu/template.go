@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"go/ast"
 	"go/doc"
-	"go/token"
 	"path"
-	"strings"
 	"text/template"
 )
 
@@ -35,17 +33,13 @@ func NewData() *Data {
 	}
 }
 
-func (d *Data) Parse(path string, source interface{}) (paths []string, err error) {
+func (d *Data) Parse(path string, source interface{}) (importPaths string, err error) {
 	d.Ext = ""
-	d.ImportPath = ""
-
-	paths, err = d.Docu.Parse(path, source)
-	if err != nil || len(paths) == 0 {
-		return
-	}
-	d.ImportPath = paths[0]
-	if pos := strings.Index(d.ImportPath, "::"); pos != -1 {
-		d.ImportPath = d.ImportPath[:pos]
+	importPaths, err = d.Docu.Parse(path, source)
+	if err == nil {
+		d.ImportPath = importPaths
+	} else {
+		d.ImportPath = ""
 	}
 	return
 }
@@ -57,6 +51,7 @@ func (d *Data) SetFilter(filter func(*ast.File) bool) {
 // File 返回 MergePackageFiles d.Key 的值
 func (d *Data) File() *ast.File {
 	f := d.Docu.MergePackageFiles(d.Key)
+	ClearComments(f)
 	if d.filter != nil {
 		d.filter(f)
 	}
@@ -86,7 +81,7 @@ func (d *Data) Code(decl ast.Decl) string {
 	docGroup := genDecl.Doc
 	genDecl.Doc = nil
 	d.buf.Truncate(0)
-	config.Fprint(&d.buf, d.Docu.FileSet, genDecl)
+	FprintGenDecl(&d.buf, genDecl, nil)
 	genDecl.Doc = docGroup
 	return d.buf.String()
 }
@@ -121,15 +116,7 @@ var FuncsMap = template.FuncMap{
 	"nodeNum":              NodeNumber,
 	"lineWrap":             LineWrapper,
 	"identLit":             DeclIdentLit,
-	"prevComment": func(comments []*ast.CommentGroup, pos token.Pos) *ast.CommentGroup {
-		// prevComment 在 comments 中查找 pos 的上一个 CommentGroup.
-		// 返回 nil 表示未找到.
-		i := findCommentPrev(pos, comments)
-		if i == -1 {
-			return nil
-		}
-		return comments[i]
-	},
+	"originDoc":            OriginDoc,
 	"imports": func(file *ast.File) string {
 		// 返回 file 的 import 代码
 		return ImportsString(file.Imports)

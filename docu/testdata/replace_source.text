@@ -1,0 +1,29 @@
+// +build ingore
+
+// package comments
+package testdata
+
+const (
+	// origin comments
+
+	// trans comments
+	Ok = 1
+)
+
+type (
+	// origin comments.
+	Wrap struct {
+		// origin comments
+
+		// trans comments
+		Text string
+	}
+)
+
+type Temp Template // origin comments // trans comments
+
+// origin comments
+
+// trans comments
+type Template struct {
+}

@@ -6,15 +6,18 @@ Godocu 基于 [docu][] 实现的指令行工具, 从 Go 源码生成文档.
 
   - 80 列换行, 支持多字节字符
   - 若原注释已经符合 80 列换行, 保持不变.
+  - 缩进使用 tab(width = 4)
+  - 换行使用 "\n"
+  - 多平台文档只提取 linux, amd64 的组合
   - 可提取执行包文档, 测试包文档, 非导出符号文档
   - 遍历目录
-  - 生成多种风格文档, Go 源码风格, 文本风格, Markdown 风格, 支持模板
+  - 过滤掉同目录多包
+  - 生成文档格式含 Go 源码风格, Markdown 风格, 支持模板
   - 生成文档概要清单
   - 合并生成双语文档
   - 合并两份双语文档中的翻译成果
   - 比较两份文档差异
   - 比较两个包目录结构差异
-  - 多平台文档只提取 linux, amd64 的组合
 
 该工具在 Golang 官方包下测试通过, 非官方包请核对输出结果.
 
@@ -25,8 +28,35 @@ Godocu 文档文件名由前缀 "doc"|"main"|"test" 和语言后缀 "_lang" 以�
 扩展名
 
  - `code`,`merge`,`replace` 指令输出扩展名为 ".go".
- - `plain` 指令扩展名为 ".text".
  - `tmpl` 指令扩展名由模板决定, 比如 ".md"
+
+丢弃下列尾注释
+
+```go
+const ( // this comment is discarded
+    // ...
+)
+
+type T struct { // this comment is discarded
+    // ...
+}
+```
+
+格式化差异
+
+go fmt 格式化后为
+
+```go
+const Docu = 1 // comment Docu
+const Hi = 1   // comment Hi
+```
+
+godocu 格式化后为
+
+```go
+const Docu = 1 // comment Docu
+const Hi   = 1 // comment Hi
+```
 
 # Install
 
@@ -47,7 +77,6 @@ The commands are:
   first   compare the source and target, the first difference output
   tree    compare different directory structure of the source and target
   code    prints a formatted string to target as Go source code
-  plain   prints plain text documentation to target as godoc
   tmpl    prints documentation from template
   list    generate godocu style documents list
   merge   merge source doc to target
@@ -101,7 +130,7 @@ Godocu 要求某个包的目录结构在 source 和 target 下是相同的.
 
 方便起见, target 值为 "--" 表示输出到 source 计算得到的原包目录.
 
-对于 `code`, `plain`,`list`,`tmpl` 指令, target 可选, 缺省输出到 Stdout.
+对于 `code`, `list`,`tmpl` 指令, target 可选, 缺省输出到 Stdout.
 
 对于 `diff`, `first`, `tree` 指令, target 必选, 结果输出到 Stdout.
 
@@ -120,7 +149,7 @@ Godocu 要求某个包的目录结构在 source 和 target 下是相同的.
 
 方便起见, 未指定 `lang` 时, Godocu 尝试从 target 下首个匹配的包提取 `lang`.
 
-*提示: 不要让多种翻译文档共存同一目录*
+*提示: 同一目录下的翻译文档应具有相同的 lang*
 
 详情参见相关指令.
 
@@ -133,6 +162,7 @@ Godocu 要求某个包的目录结构在 source 和 target 下是相同的.
 # unexported
 
 参数 'u' 允许文档包含顶级非导出声明.
+该参数只对 `diff`, `first`, `code`, `tmpl` 指令有效.
 
 比如 `builtin` 包的声明多是非导出的, 但在文档中是不可或缺的.
 
@@ -142,7 +172,6 @@ Godocu 的非导出优先策略是:
  2. 如果目标已存在且有 Godocu 风格 ".go" 文件, 其中的非导出声明被保留
  3. 否则不输出非导出声明
 
-该参数对 `merge`, `replace` 指令无效, 因这两个指令的目标必须存在.
 
 # goroot
 
@@ -166,7 +195,8 @@ Godocu 的非导出优先策略是:
  - target 可以是源码或包文档.
  - 结果总是使用 source 的 import.
  - 如果声明的文档一样, 不追加, 即只有一份文档.
- - source, target 都有尾注释的话, 使用 target 中的尾注释.
+ - 尾注释翻译格式约定: // origin comment // trans comment
+ - 如果 target 中是尾注释翻译, 保留该翻译, 否则使用 source 的尾注释.
  - 指定 `lang` 参数才生成或覆盖 target, 否则仅向 stdout 打印结果.
  - 最终结果 source 中已被删除的声明会被剔除, 新声明会出现.
 
@@ -196,12 +226,6 @@ $ godocu code builtin -u
 
 如你所见, Godocu 支持 "-" 开头的参数在任意位置出现.
 
-# Plain
-
-指令 `plain` 输出 ".text" 格式单文档.
-
-如果指定了 target 要求参数 `lang` 非空.
-
 # Tmpl
 
 指令 `tmpl` 支持模板输出, 参数 'file' 指定模板文件, 缺省为内置的 Markdown 模板.
@@ -210,9 +234,11 @@ $ godocu code builtin -u
 
 指令 `tree` 遍历比较输出 sourec, target 目录结构差异.
 
+*注意: 参数 lang, p 在该指令下无效*
+
 该指令总是遍历目录, source 无需加 "..."
 
-遍历比较当前版本 1.6.2 和老版本的差异:
+遍历比较当前版本 1.6.2 和老版本的目录差异:
 
 ```shell
 $ godocu tree ... /usr/local/Cellar/go/1.5.2/libexec/src
@@ -373,15 +399,14 @@ target:
 相关输出结构
 
 ```go
-// List 表示在同一个 repo 下全部包文档信息
+// List 表示在同一个 repo 下全部包文档信息.
 type List struct {
   // Repo 是原源代码所在托管 git 仓库地址.
   // 如果无法识别值为 "localhost"
   Repo string
 
-  // Description 一句话介绍 Repo 或列表
-  // Readme 整个 list 的 readme 文件名
-  Description, Readme string `json:",omitempty"`
+  // Readme 该 list 或 Repo 的 readme 文件, 自动提取.
+  Readme string `json:",omitempty"`
 
   // 文档文件名
   Filename string
@@ -394,14 +419,22 @@ type List struct {
   // 该值由使用者手工设置, Godocu 只是保留它.
   Subdir string `json:",omitempty"`
 
+  // Description 该 list 或 Repo 的一句话介绍.
+  // 该值由使用者手工设置, Godocu 只是保留它.
+  Description string `json:",omitempty"`
+
+  // Golist 表示额外的 golist 文件, 类似友链接, 可以是本目录的或外部的.
+  // 该值由使用者手工设置, Godocu 只是保留它.
+  Golist []string `json:",omitempty"`
+
   Package []Info // 所有包的信息
 }
 
 // Info 表示单个包文档信息.
 type Info struct {
   Import   string // 导入路径
-  Synopsis string // 一句话包摘要
-  // Readme 该包下 readme 文件名
+  Synopsis string // 自动提取的一句话包摘要
+  // Readme 该包下 readme 文件名, 自动提取.
   Readme   string `json:",omitempty"`
   Progress int    // 翻译完成度
 }
@@ -456,9 +489,9 @@ $ godocu list src...
 # Replace
 
 指令 `replace` 用 source 的翻译文档替换 target 中未翻译的文档.
-要求 source, target 必须都是翻译文档, 即符合 Godocu 文件名命名风格.
+要求 source, target 必须都是翻译文档, 且代码结构一致.
 
-显然在使用 `replace` 前, 对 source, target 进行 'merge' 处理可保障代码结构一致.
+*使用 `replace` 前, 对 source, target 进行 'merge' 处理可保障代码结构一致.*
 
 # Example
 

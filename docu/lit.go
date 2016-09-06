@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"go/ast"
 	"go/types"
-	"strings"
 )
 
 // DeclIdentLit 返回返 decl 第一个 ast.Spec 的 Ident 字面描述.
@@ -29,8 +28,6 @@ func SpecIdentLit(spec ast.Spec) (lit string) {
 		if len(n.Names) != 0 {
 			lit = n.Names[0].String()
 		}
-	case *ast.ImportSpec:
-		lit = n.Path.Value
 	case *ast.TypeSpec:
 		lit = n.Name.String()
 	}
@@ -42,7 +39,6 @@ func SpecTypeLit(spec ast.Spec) (lit string) {
 	switch n := spec.(type) {
 	case *ast.ValueSpec:
 		lit = types.ExprString(n.Type)
-	case *ast.ImportSpec:
 	case *ast.TypeSpec:
 		lit = types.ExprString(n.Type)
 	}
@@ -56,8 +52,6 @@ func SpecDoc(spec ast.Spec) *ast.CommentGroup {
 	}
 	switch n := spec.(type) {
 	case *ast.ValueSpec:
-		return n.Doc
-	case *ast.ImportSpec:
 		return n.Doc
 	case *ast.TypeSpec:
 		return n.Doc
@@ -73,15 +67,13 @@ func SpecComment(spec ast.Spec) (*ast.CommentGroup, *ast.CommentGroup) {
 	switch n := spec.(type) {
 	case *ast.ValueSpec:
 		return n.Doc, n.Comment
-	case *ast.ImportSpec:
-		return n.Doc, n.Comment
 	case *ast.TypeSpec:
 		return n.Doc, n.Comment
 	}
 	return nil, nil
 }
 
-// RecvIdentLit 返回返回类型方法接收者 recv 的 Ident 字面描述.
+// RecvIdentLit 返回 decl.Recv Ident 字面描述. 不含 decl.Name.
 func RecvIdentLit(decl *ast.FuncDecl) (lit string) {
 	if decl.Recv == nil || len(decl.Recv.List) == 0 {
 		return
@@ -107,33 +99,62 @@ func FuncIdentLit(decl *ast.FuncDecl) (lit string) {
 	return lit + "." + decl.Name.String()
 }
 
-// FuncLit 返回 FuncDecl 的字面描述.
+func FuncParamsLit(decl *ast.FuncDecl) (lit string) {
+	return "(" + FieldListLit(decl.Type.Params) + ")"
+}
+
+func FuncResultsLit(decl *ast.FuncDecl) (lit string) {
+	lit = FieldListLit(decl.Type.Results)
+	if lit != "" && (len(decl.Type.Results.List) > 1 ||
+		len(decl.Type.Results.List[0].Names) != 0) {
+		lit = "(" + lit + ")"
+	}
+	return
+}
+
+// FuncLit 返回 FuncDecl 的字面描述. 不含 decl.Name.
 func FuncLit(decl *ast.FuncDecl) (lit string) {
-	lit = FieldListLit(decl.Type.Params)
-	suffix := FieldListLit(decl.Type.Results)
-	if suffix == "" {
-		suffix = "(" + lit + ")"
-	} else if strings.IndexAny(suffix, " ,") == -1 {
-		suffix = "(" + lit + ") " + suffix
-	} else {
-		suffix = "(" + lit + ") (" + suffix + ")"
-	}
-
-	if decl.Name != nil {
-		suffix = decl.Name.String() + suffix
-	}
-
-	lit = RecvIdentLit(decl)
+	lit = FuncResultsLit(decl)
 	if lit == "" {
-		lit = "func " + suffix
+		lit = FuncParamsLit(decl)
 	} else {
-		lit = "func (" + lit + ") " + suffix
+		lit = FuncParamsLit(decl) + " " + lit
 	}
+	if decl.Name != nil {
+		lit = decl.Name.String() + lit
+	}
+	recv := RecvIdentLit(decl)
+	if recv == "" {
+		lit = "func " + lit
+	} else {
+		lit = "func (" + recv + ") " + lit
+	}
+	return
+}
+
+// MethodLit 返回 FuncDecl 的字面描述. 含 decl.Name.
+func MethodLit(decl *ast.FuncDecl) (lit string) {
+	lit = FuncResultsLit(decl)
+	if lit == "" {
+		lit = FuncParamsLit(decl)
+	} else {
+		lit = FuncParamsLit(decl) + " " + lit
+	}
+	if decl.Name != nil {
+		lit = decl.Name.String() + lit
+	}
+
+	if decl.Recv != nil && len(decl.Recv.List) != 0 {
+		lit = "(" + FieldListLit(decl.Recv) + ") " + lit
+	}
+
+	lit = "func " + lit
 	return
 }
 
 // FieldListLit 返回 ast.FieldList.List 的字面值.
 // 该方法仅适用于:
+//  ast.FuncDecl.Recv.List
 //	ast.FuncDecl.Type.Params
 //	ast.FuncDecl.Type.Results
 //
@@ -174,6 +195,9 @@ func FieldLit(field *ast.Field) (lit string) {
 }
 
 func IdentsLit(idents []*ast.Ident) (lit string) {
+	if len(idents) == 0 {
+		return
+	}
 	lit = idents[0].String()
 	for i := 1; i < len(idents); i++ {
 		lit += ", " + idents[i].String()
@@ -192,9 +216,9 @@ func ImportsString(is []*ast.ImportSpec) (s string) {
 	}
 	for i, im := range is {
 		if i == 0 {
-			s += "import (\n    " + im.Path.Value + nl
+			s += "import (\n\t" + im.Path.Value + nl
 		} else {
-			s += "    " + im.Path.Value + nl
+			s += "\t" + im.Path.Value + nl
 		}
 	}
 	s += ")\n"
